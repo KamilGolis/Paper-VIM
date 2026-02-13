@@ -4,74 +4,109 @@
 SetWinDelay -1
 
 ; ==============================================================================
-; CONFIGURATION & HUD
+; CONFIGURATION & GLOBAL VARIABLES
 ; ==============================================================================
-global WindowStack := []
-global TargetWidth := A_ScreenWidth * 0.95
-global Gap := 8
-global CenterX := (A_ScreenWidth - TargetWidth) / 2
-global BarHeight := 60
-global TaskbarHeight := 48
-global TaskbarHidden := false
-global V_Height := A_ScreenHeight - BarHeight - (3 * Gap)
-global V_Top := 2 * Gap
-global OverlayMode := false
-global Mode := 0
-global CurrentDesktop := 1
-global ReflowTimer := 0
-; Track which desktops have been arranged
-global InitializedDesktops := Map()
+
+; --- Window Layout Configuration ---
+global WindowStack := []              ; Array of managed window handles
+global TargetWidth := A_ScreenWidth * 0.95  ; Width of each window (95% of screen)
+global Gap := 8                       ; Gap between windows and screen edges
+global CenterX := (A_ScreenWidth - TargetWidth) / 2  ; Horizontal center position
+global BarHeight := 60                ; Reserved space at top for HUD and dock
+global TaskbarHeight := 48            ; Windows taskbar height (for height calculations)
+global V_Top := 2 * Gap               ; Top Y position for windows
+global OverlayMode := false           ; Toggle between tiling and overlay (fullscreen) mode
+global TaskbarHidden := false         ; Track Windows taskbar visibility state
+
+; --- Vim Mode State ---
+global Mode := 0                      ; 0=Off, 1=Normal, 2=Visual
+
+; --- Desktop Management ---
+global CurrentDesktop := 1            ; Currently active virtual desktop number
+global InitializedDesktops := Map()  ; Track which desktops have been auto-arranged
+global ReflowTimer := 0               ; Debounce timer for window reflow operations
+
+; --- Visual Customization ---
+global HUDBackgroundColor := "121212"     ; VIM HUD background (dark gray)
+global DockBackgroundColor := "1a1a1a"    ; Dock background (darker gray)
+global NormalModeColor := "c00FF00"       ; Normal mode text color (green)
+global VisualModeColor := "cFF0000"       ; Visual mode text color (red)
+global FlashMsgColor := "cFFFF00"         ; Flash message color (yellow)
+global ActiveIndicatorColor := "00FF00"   ; Dock active window underline (green)
+
+; --- Dock Configuration ---
+global DockIconSize := 32             ; Size of dock icons in pixels
+global DockIconSpacing := 8           ; Spacing between dock icons
+global DockLeftCount := 2             ; Number of icons shown left of active
+global DockRightCount := 2            ; Number of icons shown right of active
+global DockMarginX := 12              ; Dock horizontal margin
+global DockMarginY := 8               ; Dock vertical margin
+global DockPosY := 10                 ; Dock Y position from top
+global DockIcons := []                ; Array of dock icon controls
+
+; --- HUD Configuration ---
+global HUDPosX := A_ScreenWidth - 240 ; HUD X position from left
+global HUDPosY := 40                  ; HUD Y position from top
+global HUDWidth := 220                ; HUD width in pixels
+global FlashDuration := 800           ; Flash message duration in milliseconds
+
+; --- Timing Configuration ---
+global DblClickTimeout := 400         ; Timeout for double-key commands (gg, dd, etc.)
+global DebounceDelay := 50            ; Debounce delay for window reflow (ms)
+global DesktopSwitchDelay := 200      ; Delay after desktop switch before arranging (ms)
+global DockUpdateDelay := 100         ; Delay for dock update after window change (ms)
+global TooltipDuration := 1000        ; Tooltip display duration (ms)
+
+; --- Window Style Constants ---
+global TitleBarMask := 0x00C00000     ; Window style mask for title bar detection
 
 ; HUD Setup
 VimGui := Gui("+AlwaysOnTop -Caption +ToolWindow +LastFound")
-VimGui.BackColor := "121212"
+VimGui.BackColor := HUDBackgroundColor
 VimGui.SetFont("s16 w800", "Segoe UI")
-VimText := VimGui.Add("Text", "Center w220", "VIM: NORMAL")
-WinSetTransColor("121212", VimGui)
+VimText := VimGui.Add("Text", "Center w" HUDWidth, "VIM: NORMAL")
+WinSetTransColor(HUDBackgroundColor, VimGui)
 
 ; Dock HUD Setup
 DockGui := Gui("+AlwaysOnTop -Caption +ToolWindow +LastFound")
-DockGui.BackColor := "1a1a1a"
-WinSetTransColor("1a1a1a", DockGui)
-DockGui.MarginX := 12
-DockGui.MarginY := 8
-global DockIcons := []
+DockGui.BackColor := DockBackgroundColor
+WinSetTransColor(DockBackgroundColor, DockGui)
+DockGui.MarginX := DockMarginX
+DockGui.MarginY := DockMarginY
 
 UpdateHUD(NewState) {
     global Mode := NewState
     if (Mode == 0) {
         VimGui.Hide()
     } else if (Mode == 1) {
-        VimText.Opt("c00FF00")
+        VimText.Opt(NormalModeColor)
         VimText.Value := "VIM: NORMAL"
-        VimGui.Show("x" (A_ScreenWidth - 240) " y40 NoActivate")
+        VimGui.Show("x" HUDPosX " y" HUDPosY " NoActivate")
     } else if (Mode == 2) {
-        VimText.Opt("cFF0000")
+        VimText.Opt(VisualModeColor)
         VimText.Value := "VIM: VISUAL"
-        VimGui.Show("x" (A_ScreenWidth - 240) " y40 NoActivate")
+        VimGui.Show("x" HUDPosX " y" HUDPosY " NoActivate")
     }
 }
 
-FlashMessage(Msg, Duration := 800) {
+FlashMessage(Msg, Duration := FlashDuration) {
     if (Mode > 0) {
-        origColor := (Mode == 2) ? "cFF0000" : "c00FF00"
-        VimText.Opt("cFFFF00")
+        VimText.Opt(FlashMsgColor)
         VimText.Value := Msg
         SetTimer(() => UpdateHUD(Mode), -Duration)
     }
 }
 
 UpdateDock() {
-    global WindowStack, DockGui, DockIcons
+    global WindowStack, DockGui
 
     ; Destroy entire GUI and recreate to avoid duplicates
     try DockGui.Destroy()
     DockGui := Gui("+AlwaysOnTop -Caption +ToolWindow +LastFound")
-    DockGui.BackColor := "1a1a1a"
-    WinSetTransColor("1a1a1a", DockGui)
-    DockGui.MarginX := 12
-    DockGui.MarginY := 8
-    DockIcons := []
+    DockGui.BackColor := DockBackgroundColor
+    WinSetTransColor(DockBackgroundColor, DockGui)
+    DockGui.MarginX := DockMarginX
+    DockGui.MarginY := DockMarginY
 
     if (WindowStack.Length == 0) {
         return
@@ -91,13 +126,6 @@ UpdateDock() {
         return
     }
 
-    iconSize := 32
-    iconSpacing := 8
-    ; Show 2 icons on the left
-    leftCount := 2
-    ; Show 2 icons on the right
-    rightCount := 2
-
     ; Helper function to wrap index
     WrapIndex(idx) {
         while (idx < 1)
@@ -110,49 +138,45 @@ UpdateDock() {
     ; Build the dock from left to right
     xPos := 0
 
-    ; Add left icons (2 previous windows, in correct order)
+    ; Add left icons (previous windows, in correct order)
     leftIndices := []
-    loop leftCount {
-        idx := WrapIndex(activeIndex - leftCount + A_Index - 1)
+    loop DockLeftCount {
+        idx := WrapIndex(activeIndex - DockLeftCount + A_Index - 1)
         leftIndices.Push(idx)
     }
 
     for idx in leftIndices {
         try {
             iconPath := GetWindowIconPath(WindowStack[idx])
-            pic := DockGui.Add("Picture", "x" xPos " y0 w" iconSize " h" iconSize, iconPath)
-            DockIcons.Push(pic)
-            xPos += iconSize + iconSpacing
+            pic := DockGui.Add("Picture", "x" xPos " y0 w" DockIconSize " h" DockIconSize, iconPath)
+            xPos += DockIconSize + DockIconSpacing
         }
     }
 
     ; Add center icon (active window) - with underline
     try {
         iconPath := GetWindowIconPath(WindowStack[activeIndex])
-        pic := DockGui.Add("Picture", "x" xPos " y0 w" iconSize " h" iconSize, iconPath)
-        DockIcons.Push(pic)
+        pic := DockGui.Add("Picture", "x" xPos " y0 w" DockIconSize " h" DockIconSize, iconPath)
         ; Add underline below active icon
-        DockGui.Add("Text", "x" xPos " y" (iconSize + 2) " w" iconSize " h2 Background00FF00")
-        xPos += iconSize + iconSpacing
+        DockGui.Add("Text", "x" xPos " y" (DockIconSize + 2) " w" DockIconSize " h2 Background" ActiveIndicatorColor)
+        xPos += DockIconSize + DockIconSpacing
     }
 
-    ; Add right icons (2 next windows)
-    loop rightCount {
+    ; Add right icons (next windows)
+    loop DockRightCount {
         idx := WrapIndex(activeIndex + A_Index)
         try {
             iconPath := GetWindowIconPath(WindowStack[idx])
-            pic := DockGui.Add("Picture", "x" xPos " y0 w" iconSize " h" iconSize, iconPath)
-            DockIcons.Push(pic)
-            xPos += iconSize + iconSpacing
+            pic := DockGui.Add("Picture", "x" xPos " y0 w" DockIconSize " h" DockIconSize, iconPath)
+            xPos += DockIconSize + DockIconSpacing
         }
     }
 
     ; Calculate total width and position dock at screen center
-    ; 5 total icons (2 left, 1 active, 2 right)
-    totalIcons := leftCount + 1 + rightCount
-    totalWidth := (totalIcons * iconSize) + ((totalIcons - 1) * iconSpacing) + 24
+    totalIcons := DockLeftCount + 1 + DockRightCount
+    totalWidth := (totalIcons * DockIconSize) + ((totalIcons - 1) * DockIconSpacing) + 24
     dockX := (A_ScreenWidth - totalWidth) / 2
-    DockGui.Show("x" dockX " y10 w" totalWidth " h" (iconSize + 16) " NoActivate")
+    DockGui.Show("x" dockX " y" DockPosY " w" totalWidth " h" (DockIconSize + 16) " NoActivate")
 }
 
 GetWindowIconPath(hwnd) {
@@ -221,15 +245,15 @@ DeferredReflow() {
     if (ReflowTimer)
         SetTimer(ReflowTimer, 0)
     ReflowTimer := () => ReflowStack()
-    ; Debounce: wait 50ms before reflowing
-    SetTimer(ReflowTimer, -50)
+    ; Debounce: wait before reflowing
+    SetTimer(ReflowTimer, -DebounceDelay)
 }
 
 ManageNewWindow(hwnd) {
     if !WinExist(hwnd)
         return
     style := WinGetStyle(hwnd)
-    if !(style & 0x00C00000)
+    if !(style & TitleBarMask)
     ; Title bar filter
         return
     for item in WindowStack
@@ -310,7 +334,7 @@ GoToDesktop(Target) {
     ; Auto-arrange windows on new desktop if not initialized
     if (!InitializedDesktops.Has(Target)) {
         ; Delay to let desktop switch complete before arranging
-        SetTimer(() => InitializeDesktop(Target), -200)
+        SetTimer(() => InitializeDesktop(Target), -DesktopSwitchDelay)
     }
 }
 
@@ -357,7 +381,7 @@ CycleStack(direction) {
     try WinActivate(WindowStack[newIndex])
     ; ReflowStack will be triggered automatically via ShellMessage hook
     ; Update dock after window activation
-    SetTimer(() => UpdateDock(), -100)
+    SetTimer(() => UpdateDock(), -DockUpdateDelay)
 }
 
 InitializeExistingWindows() {
@@ -365,7 +389,7 @@ InitializeExistingWindows() {
     for hwnd in windowList {
         try {
             style := WinGetStyle(hwnd)
-            if (style & 0x00C00000) {
+            if (style & TitleBarMask) {
                 ; Has title bar
                 title := WinGetTitle(hwnd)
                 if (title != "" && !InStr(title, "Program Manager")) {
@@ -423,7 +447,7 @@ ToggleTaskbar() {
         TaskbarHidden := false
         ToolTip("Taskbar: VISIBLE")
     }
-    SetTimer(() => ToolTip(), -1000)
+    SetTimer(() => ToolTip(), -TooltipDuration)
     
     ; Recalculate all window heights after toggling taskbar
     ReflowStack()
@@ -447,7 +471,7 @@ CapsLock:: UpdateHUD(Mode == 0 ? 1 : 0)
     global CurrentDesktop -= 1
     global InitializedDesktops
     if (!InitializedDesktops.Has(CurrentDesktop)) {
-        SetTimer(() => InitializeDesktop(CurrentDesktop), -200)
+        SetTimer(() => InitializeDesktop(CurrentDesktop), -DesktopSwitchDelay)
     }
 }
 ^k:: {
@@ -455,7 +479,7 @@ CapsLock:: UpdateHUD(Mode == 0 ? 1 : 0)
     global CurrentDesktop += 1
     global InitializedDesktops
     if (!InitializedDesktops.Has(CurrentDesktop)) {
-        SetTimer(() => InitializeDesktop(CurrentDesktop), -200)
+        SetTimer(() => InitializeDesktop(CurrentDesktop), -DesktopSwitchDelay)
     }
 }
 ^1:: GoToDesktop(1)
@@ -552,20 +576,20 @@ Esc:: UpdateHUD(0)
 #HotIf Mode == 1
 ; Document Navigation
 g:: {
-    if (A_PriorHotkey == "g" and A_TimeSincePriorHotkey < 400)
+    if (A_PriorHotkey == "g" and A_TimeSincePriorHotkey < DblClickTimeout)
         Send "^{Home}" ; 'gg'
 }
 +g:: Send "^{End}" ; 'G'
 
 ; Delete Commands
 d:: {
-    if (A_PriorHotkey == "d" and A_TimeSincePriorHotkey < 400)
+    if (A_PriorHotkey == "d" and A_TimeSincePriorHotkey < DblClickTimeout)
         Send "{Home}+{End}{BackSpace}{Delete}" ; 'dd'
 }
 
 ; Change Commands
 c:: {
-    if (A_PriorHotkey == "c" and A_TimeSincePriorHotkey < 400) {
+    if (A_PriorHotkey == "c" and A_TimeSincePriorHotkey < DblClickTimeout) {
         Send "{Home}+{End}{BackSpace}" ; 'cc'
         UpdateHUD(0)
     } else {
@@ -576,7 +600,7 @@ c:: {
 
 ; Yank Commands
 y:: {
-    if (A_PriorHotkey == "y" and A_TimeSincePriorHotkey < 400) {
+    if (A_PriorHotkey == "y" and A_TimeSincePriorHotkey < DblClickTimeout) {
         Send "{Home}+{End}^c" ; 'yy'
         FlashMessage("COPIED LINE")
     } else {

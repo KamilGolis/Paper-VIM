@@ -232,19 +232,64 @@ Dock shows: [3] [4] [5̲] [1] [2]
 
 ## ⚙️ Configuration (Advanced)
 
-Edit these variables at the top of `paper-vim.ahk`:
+All configuration variables are defined at the top of `paper-vim.ahk`. You can customize the behavior by editing these values:
+
+### Window Layout Configuration
 
 ```ahk
 Global TargetWidth := A_ScreenWidth * 0.95  ; Window width (95% of screen)
-Global Gap := 8                              ; Gap between windows
-Global BarHeight := 60                       ; Reserved space at top (for dock/HUD)
+Global Gap := 8                              ; Gap between windows and screen edges
+Global BarHeight := 60                       ; Reserved space at top for HUD and dock
 Global TaskbarHeight := 48                   ; Windows taskbar height (for calculations)
 ```
 
-### Visual Customization
-- **Dock icon size**: Change `iconSize := 32` in `UpdateDock()`
-- **Dock icon count**: Modify `leftCount := 2` and `rightCount := 2`
-- **HUD colors**: Edit color codes in `UpdateHUD()` (00FF00=green, FF0000=red)
+### Visual Customization - Colors
+
+```ahk
+Global HUDBackgroundColor := "121212"        ; VIM HUD background (dark gray)
+Global DockBackgroundColor := "1a1a1a"       ; Dock background (darker gray)
+Global NormalModeColor := "c00FF00"          ; Normal mode text color (green)
+Global VisualModeColor := "cFF0000"          ; Visual mode text color (red)
+Global FlashMsgColor := "cFFFF00"            ; Flash message color (yellow)
+Global ActiveIndicatorColor := "00FF00"      ; Dock active window underline (green)
+```
+
+### Dock Configuration
+
+```ahk
+Global DockIconSize := 32                    ; Size of dock icons in pixels
+Global DockIconSpacing := 8                  ; Spacing between dock icons
+Global DockLeftCount := 2                    ; Number of icons shown left of active
+Global DockRightCount := 2                   ; Number of icons shown right of active
+Global DockMarginX := 12                     ; Dock horizontal margin
+Global DockMarginY := 8                      ; Dock vertical margin
+Global DockPosY := 10                        ; Dock Y position from top
+```
+
+### HUD Configuration
+
+```ahk
+Global HUDPosX := A_ScreenWidth - 240        ; HUD X position from left
+Global HUDPosY := 40                         ; HUD Y position from top
+Global HUDWidth := 220                       ; HUD width in pixels
+```
+
+### Timing Configuration
+
+```ahk
+Global FlashDuration := 800                  ; Flash message duration (milliseconds)
+Global DblClickTimeout := 400                ; Timeout for double-key commands (gg, dd, etc.)
+Global DebounceDelay := 50                   ; Debounce delay for window reflow (ms)
+Global DesktopSwitchDelay := 200             ; Delay after desktop switch before arranging (ms)
+Global DockUpdateDelay := 100                ; Delay for dock update after window change (ms)
+Global TooltipDuration := 1000               ; Tooltip display duration (ms)
+```
+
+### Window Style Constants
+
+```ahk
+Global TitleBarMask := 0x00C00000            ; Window style mask for title bar detection
+```
 
 ---
 
