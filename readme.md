@@ -6,6 +6,8 @@ A powerful AutoHotkey v2.0 script that combines vim-style keyboard navigation wi
 
 - **Vim Mode Integration**: System-wide vim keybindings for text editing and navigation
 - **PaperWM-Style Window Management**: Automatic horizontal scrolling window layout
+- **Dynamic Height Adjustment**: Windows auto-resize based on taskbar visibility
+- **Taskbar Toggle**: Hide/show Windows taskbar with automatic window reflow
 - **Visual Window Dock**: Live icon preview showing your window stack position
 - **Multi-Desktop Support**: Automatic window arrangement across virtual desktops
 - **Smart Window Tracking**: Automatic management of new/closed windows
@@ -37,6 +39,8 @@ A powerful AutoHotkey v2.0 script that combines vim-style keyboard navigation wi
 - **n**: Next window in stack
 - **p**: Previous window in stack
 - **z**: Reflow/refresh window layout
+- **Ctrl+T**: Toggle taskbar visibility (windows auto-resize)
+- **Ctrl+F**: Toggle overlay mode (fullscreen stacked windows)
 
 The active window automatically centers on screen with a scrolling effect!
 
@@ -60,7 +64,8 @@ The active window automatically centers on screen with a scrolling effect!
 - **z**: Manually reflow/refresh window positions
 
 ### Layout Modes
-- **Ctrl+T**: Toggle Overlay Mode (all windows fullscreen, stacked)
+- **Ctrl+F**: Toggle Overlay Mode (all windows maximized with small gaps, stacked)
+- **Ctrl+T**: Toggle Windows Taskbar visibility (windows auto-resize to use available space)
 - **Ctrl+Shift+D**: Remove active window from managed stack
 
 ### Visual Dock
@@ -204,6 +209,13 @@ Dock shows: [3] [4] [5̲] [1] [2]
 3. Closed windows are automatically removed
 4. Windows are positioned based on their position relative to the active window
 
+### Dynamic Height Calculation
+- Window height automatically adjusts based on taskbar visibility
+- When taskbar is **hidden** (Ctrl+T): Windows gain additional height equal to taskbar height
+- When taskbar is **visible**: Windows account for taskbar space at bottom
+- **Overlay Mode**: Maximizes height with small gaps (top gap, and bottom gap that includes taskbar when visible)
+- All windows automatically reflow when taskbar visibility changes
+
 ### Desktop Awareness
 - Uses a Map to track which desktops have been initialized
 - On desktop switch, checks if arrangement is needed
@@ -220,12 +232,13 @@ Dock shows: [3] [4] [5̲] [1] [2]
 
 ## ⚙️ Configuration (Advanced)
 
-Edit these variables at the top of `vim-k.ahk`:
+Edit these variables at the top of `paper-vim.ahk`:
 
 ```ahk
 Global TargetWidth := A_ScreenWidth * 0.95  ; Window width (95% of screen)
 Global Gap := 8                              ; Gap between windows
-Global BarHeight := 60                       ; Reserved space at bottom
+Global BarHeight := 60                       ; Reserved space at top (for dock/HUD)
+Global TaskbarHeight := 48                   ; Windows taskbar height (for calculations)
 ```
 
 ### Visual Customization
@@ -273,6 +286,7 @@ If the dock shows blank spaces or default icons instead of app icons:
 3. **Combine modes**: Navigate with `hjkl`, select with `v`, edit normally
 4. **Desktop workflow**: Organize projects across virtual desktops
 5. **Stack reordering**: Use Ctrl+H/L to arrange windows by priority
+6. **Maximize screen space**: Use Ctrl+T to hide taskbar and Ctrl+F for overlay mode for distraction-free work
 
 ---
 
