@@ -285,6 +285,23 @@ ReflowStack() {
         }
     }
 
+    ; After cleanup, check if we still have windows
+    if (WindowStack.Length == 0) {
+        UpdateDock()
+        return
+    }
+
+    ; If active window was closed, activate the first window in stack
+    if (activeIndex == 0) {
+        try {
+            WinActivate(WindowStack[1])
+            activeIndex := 1
+        } catch {
+            UpdateDock()
+            return
+        }
+    }
+
     if (OverlayMode) {
         ; Small gap on top
         overlayTop := Gap
@@ -299,14 +316,17 @@ ReflowStack() {
             }
         }
     } else {
-        if (activeIndex == 0) {
-            UpdateDock()
-            return
-        }
         ; Calculate current available height based on taskbar visibility
         currentHeight := GetAvailableHeight()
         for i, hwnd in WindowStack {
-            relativeOffset := (i - activeIndex) * (TargetWidth + Gap)
+            ; Calculate circular distance for infinite scrolling
+            rawOffset := i - activeIndex
+            ; Wrap around: choose shortest path in circular arrangement
+            if (rawOffset > WindowStack.Length / 2)
+                rawOffset -= WindowStack.Length
+            else if (rawOffset < -WindowStack.Length / 2)
+                rawOffset += WindowStack.Length
+            relativeOffset := rawOffset * (TargetWidth + Gap)
             try WinMove(CenterX + relativeOffset, V_Top, TargetWidth, currentHeight, hwnd)
         }
     }
