@@ -252,15 +252,62 @@ DeferredReflow() {
 ManageNewWindow(hwnd) {
     if !WinExist(hwnd)
         return
-    style := WinGetStyle(hwnd)
-    if !(style & TitleBarMask)
-    ; Title bar filter
+    
+    ; Check if window should be managed
+    if !ShouldManageWindow(hwnd)
         return
+    
     for item in WindowStack
         if (item == hwnd)
             return
     WindowStack.Push(hwnd)
     ReflowStack()
+}
+
+; Determines if a window should be managed by the tiling system
+ShouldManageWindow(hwnd) {
+    try {
+        style := WinGetStyle(hwnd)
+        exStyle := WinGetExStyle(hwnd)
+        
+        ; Must have a title bar (WS_CAPTION)
+        if !(style & TitleBarMask)
+            return false
+        
+        ; Exclude popup windows (WS_POPUP = 0x80000000)
+        if (style & 0x80000000)
+            return false
+        
+        ; Exclude tool windows (WS_EX_TOOLWINDOW = 0x80)
+        if (exStyle & 0x80)
+            return false
+        
+        ; Check if it's a child window (has a parent)
+        parent := DllCall("GetParent", "Ptr", hwnd, "Ptr")
+        if (parent != 0)
+            return false
+        
+        ; Exclude dialog boxes (WS_EX_DLGMODALFRAME = 0x1)
+        if (exStyle & 0x1)
+            return false
+        
+        ; Exclude specific Windows UI elements by class name
+        className := WinGetClass(hwnd)
+        excludedClasses := [
+            "NotifyIconOverflowWindow",  ; System tray overflow window
+            "TopLevelWindowForOverflowXamlIsland",  ; Windows 11 tray overflow
+            "Shell_TrayWnd",             ; Taskbar itself
+            "Windows.UI.Core.CoreWindow" ; Various Windows UI popups
+        ]
+        for excludedClass in excludedClasses {
+            if (className == excludedClass)
+                return false
+        }
+        
+        return true
+    } catch {
+        return false
+    }
 }
 
 ReflowStack() {
@@ -408,18 +455,18 @@ InitializeExistingWindows() {
     windowList := WinGetList()
     for hwnd in windowList {
         try {
-            style := WinGetStyle(hwnd)
-            if (style & TitleBarMask) {
-                ; Has title bar
-                title := WinGetTitle(hwnd)
-                if (title != "" && !InStr(title, "Program Manager")) {
-                    alreadyExists := false
-                    for item in WindowStack
-                        if (item == hwnd)
-                            alreadyExists := true
-                    if (!alreadyExists)
-                        WindowStack.Push(hwnd)
-                }
+            ; Use the same filtering logic as ManageNewWindow
+            if !ShouldManageWindow(hwnd)
+                continue
+            
+            title := WinGetTitle(hwnd)
+            if (title != "" && !InStr(title, "Program Manager")) {
+                alreadyExists := false
+                for item in WindowStack
+                    if (item == hwnd)
+                        alreadyExists := true
+                if (!alreadyExists)
+                    WindowStack.Push(hwnd)
             }
         }
     }

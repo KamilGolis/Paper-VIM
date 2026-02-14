@@ -2,7 +2,11 @@
 
 A powerful AutoHotkey v2.0 script that combines vim-style keyboard navigation with a tiling window manager inspired by PaperWM. Navigate your windows and text with vim keybindings, manage multiple virtual desktops, and visualize your window stack with an elegant dock.
 
-## 🚀 Features
+## � Motivation
+
+This script was born out of necessity. Unable to use Linux with my preferred setup ([niri](https://github.com/YaLTeR/niri)) on my company computer, and lacking admin rights to install alternative window managers, I created this as a bare minimum implementation of the workflow I wanted. It brings PaperWM-style tiling and vim navigation to Windows without requiring system-level changes or administrative privileges.
+**Current Status**: This is still in early phase of development with lots of bugs and limitations (e.g., works only with main monitor setups). However, as a proof of concept, it works quite well for basic workflows. More niri-like features are planned for future releases.
+## �🚀 Features
 
 - **Vim Mode Integration**: System-wide vim keybindings for text editing and navigation
 - **PaperWM-Style Window Management**: Automatic horizontal scrolling window layout
