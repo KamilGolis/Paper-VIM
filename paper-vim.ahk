@@ -151,7 +151,7 @@ UpdateDock() {
 
     ; Destroy entire GUI and recreate to avoid duplicates
     try DockGui.Destroy()
-    catch
+    catch as err
         ; Ignore destroy errors
     
     DockGui := Gui("+AlwaysOnTop -Caption +ToolWindow +LastFound")
@@ -203,7 +203,7 @@ UpdateDock() {
             pic := DockGui.Add("Picture", "x" xPos " y0 w" DockIconSize " h" DockIconSize, iconPath)
             xPos += DockIconSize + DockIconSpacing
         }
-        catch
+        catch as err
             ; Skip windows that fail to get icon
             continue
     }
@@ -216,7 +216,7 @@ UpdateDock() {
         DockGui.Add("Text", "x" xPos " y" (DockIconSize + 2) " w" DockIconSize " h2 Background" ActiveIndicatorColor)
         xPos += DockIconSize + DockIconSpacing
     }
-    catch
+    catch as err
         ; Failed to add active window icon
         return
 
@@ -228,7 +228,7 @@ UpdateDock() {
             pic := DockGui.Add("Picture", "x" xPos " y0 w" DockIconSize " h" DockIconSize, iconPath)
             xPos += DockIconSize + DockIconSpacing
         }
-        catch
+        catch as err
             ; Skip windows that fail to get icon
             continue
     }
@@ -251,20 +251,20 @@ GetWindowIconPath(hwnd) {
     ; First, try to get large icon
     hIcon := 0
     try hIcon := SendMessage(WM_GETICON, ICON_BIG, 0, , hwnd)
-    catch
+    catch as err
         hIcon := 0
 
     if (!hIcon) {
         ; Try small icon
         try hIcon := SendMessage(WM_GETICON, ICON_SMALL2, 0, , hwnd)
-        catch
+        catch as err
             hIcon := 0
     }
 
     if (!hIcon) {
         ; Get icon from window class
         try hIcon := DllCall("GetClassLongPtr", "Ptr", hwnd, "Int", GCL_HICON, "Ptr")
-        catch
+        catch as err
             hIcon := 0
     }
 
@@ -275,7 +275,7 @@ GetWindowIconPath(hwnd) {
             if (exePath != "")
                 return exePath
         }
-        catch
+        catch as err
             ; Continue to default icon
     }
 
@@ -284,7 +284,7 @@ GetWindowIconPath(hwnd) {
         try {
             return "HICON:" hIcon
         }
-        catch
+        catch as err
             ; Fall through to default
     }
 
@@ -434,7 +434,7 @@ ReflowStack() {
                 else if (WindowStack[idx] == activeHwnd)
                     activeIndex := idx
             }
-            catch
+            catch as err
                 ; Error checking window, remove it
                 WindowStack.RemoveAt(idx)
         }
@@ -452,7 +452,7 @@ ReflowStack() {
         try {
             WinActivate(WindowStack[1])
             activeIndex := 1
-        } catch {
+        } catch as err {
             UpdateDock()
             Critical "Off"
             return
@@ -471,7 +471,7 @@ ReflowStack() {
                 WinRestore(hwnd)
                 WinMove(0, overlayTop, A_ScreenWidth, overlayHeight, hwnd)
             }
-            catch
+            catch as err
                 ; Skip windows that can't be moved
                 continue
         }
@@ -488,7 +488,7 @@ ReflowStack() {
                 rawOffset += WindowStack.Length
             relativeOffset := rawOffset * (TargetWidth + Gap)
             try WinMove(CenterX + relativeOffset, V_Top, TargetWidth, currentHeight, hwnd)
-            catch
+            catch as err
                 ; Skip windows that can't be moved
                 continue
         }
@@ -582,7 +582,7 @@ CycleStack(direction) {
         newIndex := 1
 
     try WinActivate(WindowStack[newIndex])
-    catch
+    catch as err
         ; Failed to activate window
         return
     
@@ -610,7 +610,7 @@ InitializeExistingWindows() {
                     WindowStack.Push(hwnd)
             }
         }
-        catch
+        catch as err
             ; Skip windows that cause errors
             continue
     }
@@ -657,7 +657,7 @@ ToggleTaskbar() {
 
     if (!TaskbarHidden) {
         try WinHide(target)
-        catch
+        catch as err
             ; Taskbar hide failed
             return
         
@@ -666,14 +666,14 @@ ToggleTaskbar() {
             if (WinExist("ahk_class Button"))
                 WinHide("ahk_class Button")
         }
-        catch
+        catch as err
             ; Start button hide failed
         
         TaskbarHidden := true
         ToolTip("Taskbar: HIDDEN")
     } else {
         try WinShow(target)
-        catch
+        catch as err
             ; Taskbar show failed
             return
         
@@ -681,7 +681,7 @@ ToggleTaskbar() {
             if (WinExist("ahk_class Button"))
                 WinShow("ahk_class Button")
         }
-        catch
+        catch as err
             ; Start button show failed
         
         TaskbarHidden := false
@@ -703,17 +703,17 @@ OnExit(CleanupAndExit)
 CleanupAndExit(ExitReason, ExitCode) {
     ; Hide GUIs before exit
     try VimGui.Destroy()
-    catch
+    catch as err
         ; Already destroyed
     
     try DockGui.Destroy()
-    catch
+    catch as err
         ; Already destroyed
     
     ; Show taskbar if it was hidden
     if (TaskbarHidden) {
         try WinShow("ahk_class Shell_TrayWnd")
-        catch
+        catch as err
             ; Failed to show taskbar
     }
 }
@@ -816,7 +816,7 @@ CapsLock:: {
         WindowStack[idx] := temp
         ReflowStack()
         try WinActivate(activeHwnd)
-        catch
+        catch as err
             ; Failed to reactivate
     }
 }
@@ -842,7 +842,7 @@ CapsLock:: {
         WindowStack[idx] := temp
         ReflowStack()
         try WinActivate(activeHwnd)
-        catch
+        catch as err
             ; Failed to reactivate
     }
 }
