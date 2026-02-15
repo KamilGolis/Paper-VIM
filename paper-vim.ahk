@@ -71,7 +71,22 @@ global DockUpdateDelay := 100         ; Delay for dock update after window chang
 global TooltipDuration := 1000        ; Tooltip display duration (ms)
 
 ; --- Window Style Constants ---
-global TitleBarMask := 0x00C00000     ; Window style mask for title bar detection
+global TitleBarMask := 0x00C00000     ; Window style mask for title bar detection (WS_CAPTION)
+global WS_POPUP := 0x80000000         ; Popup window style
+global WS_EX_TOOLWINDOW := 0x80       ; Tool window extended style
+global WS_EX_DLGMODALFRAME := 0x1     ; Dialog modal frame extended style
+
+; --- Window Message Constants ---
+global WM_GETICON := 0x007F           ; Get window icon message
+global ICON_BIG := 0                  ; Large icon
+global ICON_SMALL2 := 2               ; Small icon (alternative)
+global GCL_HICON := -14               ; Get class icon
+
+; --- Shell Hook Event Constants ---
+global HSHELL_WINDOWCREATED := 1      ; Window created event
+global HSHELL_WINDOWDESTROYED := 2    ; Window destroyed event
+global HSHELL_WINDOWACTIVATED := 4    ; Window activated event
+global HSHELL_FLASH := 32772          ; Window flash event
 
 ; ==============================================================================
 ; GUI INITIALIZATION
@@ -229,20 +244,20 @@ GetWindowIconPath(hwnd) {
     ; Try to get the window's icon
     ; First, try to get large icon
     hIcon := 0
-    try hIcon := SendMessage(0x007F, 0, 0, , hwnd) ; WM_GETICON, ICON_BIG
+    try hIcon := SendMessage(WM_GETICON, ICON_BIG, 0, , hwnd)
     catch
         hIcon := 0
 
     if (!hIcon) {
         ; Try small icon
-        try hIcon := SendMessage(0x007F, 2, 0, , hwnd) ; WM_GETICON, ICON_SMALL2
+        try hIcon := SendMessage(WM_GETICON, ICON_SMALL2, 0, , hwnd)
         catch
             hIcon := 0
     }
 
     if (!hIcon) {
         ; Get icon from window class
-        try hIcon := DllCall("GetClassLongPtr", "Ptr", hwnd, "Int", -14, "Ptr") ; GCL_HICON
+        try hIcon := DllCall("GetClassLongPtr", "Ptr", hwnd, "Int", GCL_HICON, "Ptr")
         catch
             hIcon := 0
     }
@@ -294,14 +309,14 @@ OnMessage(DllCall("RegisterWindowMessage", "Str", "SHELLHOOK"), ShellMessage)
 ; @param wParam - Message type (1=created, 2=destroyed, 4/32772=activated)
 ; @param lParam - Window handle
 ShellMessage(wParam, lParam, *) {
-    if (wParam = 1)
+    if (wParam = HSHELL_WINDOWCREATED)
         ; Window Created
         ManageNewWindow(lParam)
-    else if (wParam = 2)
+    else if (wParam = HSHELL_WINDOWDESTROYED)
         ; Window Destroyed
         DeferredReflow()
-    else if (wParam = 4 || wParam = 32772)
-        ; Window Activated
+    else if (wParam = HSHELL_WINDOWACTIVATED || wParam = HSHELL_FLASH)
+        ; Window Activated or Flashed
         DeferredReflow()
 }
 
@@ -352,12 +367,12 @@ ShouldManageWindow(hwnd) {
         if (!(style & TitleBarMask))
             return false
         
-        ; Exclude popup windows (WS_POPUP = 0x80000000)
-        if (style & 0x80000000)
+        ; Exclude popup windows
+        if (style & WS_POPUP)
             return false
         
-        ; Exclude tool windows (WS_EX_TOOLWINDOW = 0x80)
-        if (exStyle & 0x80)
+        ; Exclude tool windows
+        if (exStyle & WS_EX_TOOLWINDOW)
             return false
         
         ; Check if it's a child window (has a parent)
@@ -365,8 +380,8 @@ ShouldManageWindow(hwnd) {
         if (parent != 0)
             return false
         
-        ; Exclude dialog boxes (WS_EX_DLGMODALFRAME = 0x1)
-        if (exStyle & 0x1)
+        ; Exclude dialog boxes
+        if (exStyle & WS_EX_DLGMODALFRAME)
             return false
         
         ; Exclude specific Windows UI elements by class name
@@ -663,17 +678,27 @@ ToggleTaskbar() {
 ; ==============================================================================
 
 ; Initialize existing windows on startup
-InitializeExistingWindows()
-; Mark current desktop as initialized
-InitializedDesktops[CurrentDesktop] := true
+try {
+    InitializeExistingWindows()
+    ; Mark current desktop as initialized
+    InitializedDesktops[CurrentDesktop] := true
+}
+catch as err {
+    MsgBox("Failed to initialize windows on startup: " err.Message, "Warning", "Icon!")
+}
 
-CapsLock:: UpdateHUD(Mode == 0 ? 1 : 0)
+; Toggle Vim mode with CapsLock
+CapsLock:: {
+    UpdateHUD(Mode == 0 ? 1 : 0)
+}
 
 #HotIf Mode > 0
 ; --- Virtual Desktops ---
 ^j:: {
     Send("^#+{Left}")
     global CurrentDesktop -= 1
+    if (CurrentDesktop < 1)
+        global CurrentDesktop := 1
     global InitializedDesktops
     if (!InitializedDesktops.Has(CurrentDesktop)) {
         SetTimer(() => InitializeDesktop(CurrentDesktop), -DesktopSwitchDelay)
@@ -682,6 +707,8 @@ CapsLock:: UpdateHUD(Mode == 0 ? 1 : 0)
 ^k:: {
     Send("^#+{Right}")
     global CurrentDesktop += 1
+    if (CurrentDesktop > 10)
+        global CurrentDesktop := 10
     global InitializedDesktops
     if (!InitializedDesktops.Has(CurrentDesktop)) {
         SetTimer(() => InitializeDesktop(CurrentDesktop), -DesktopSwitchDelay)
@@ -698,15 +725,24 @@ CapsLock:: UpdateHUD(Mode == 0 ? 1 : 0)
 ; --- Layout Control ---
 ^f:: {
     global OverlayMode := !OverlayMode
+    FlashMessage(OverlayMode ? "OVERLAY MODE" : "TILING MODE")
     ReflowStack()
 }
 ^+d:: {
+    if (WindowStack.Length == 0)
+        return
+    
     activeHwnd := WinActive("A")
-    for i, hwnd in WindowStack
+    if (!activeHwnd)
+        return
+    
+    for i, hwnd in WindowStack {
         if (hwnd == activeHwnd) {
             WindowStack.RemoveAt(i)
+            FlashMessage("WINDOW REMOVED")
             break
         }
+    }
     ReflowStack()
 }
 ; Ctrl + T to toggle Taskbar visibility
@@ -714,33 +750,55 @@ CapsLock:: UpdateHUD(Mode == 0 ? 1 : 0)
 
 ; --- Reordering ---
 ^h:: {
-    activeHwnd := WinActive("A"), idx := 0
-    for i, hwnd in WindowStack
+    if (WindowStack.Length <= 1)
+        return
+    
+    activeHwnd := WinActive("A")
+    if (!activeHwnd)
+        return
+    
+    idx := 0
+    for i, hwnd in WindowStack {
         if (hwnd == activeHwnd) {
             idx := i
             break
         }
+    }
+    
     if (idx > 1) {
         temp := WindowStack[idx - 1]
         WindowStack[idx - 1] := WindowStack[idx]
         WindowStack[idx] := temp
         ReflowStack()
         try WinActivate(activeHwnd)
+        catch
+            ; Failed to reactivate
     }
 }
 ^l:: {
-    activeHwnd := WinActive("A"), idx := 0
-    for i, hwnd in WindowStack
+    if (WindowStack.Length <= 1)
+        return
+    
+    activeHwnd := WinActive("A")
+    if (!activeHwnd)
+        return
+    
+    idx := 0
+    for i, hwnd in WindowStack {
         if (hwnd == activeHwnd) {
             idx := i
             break
         }
+    }
+    
     if (idx > 0 && idx < WindowStack.Length) {
         temp := WindowStack[idx + 1]
         WindowStack[idx + 1] := WindowStack[idx]
         WindowStack[idx] := temp
         ReflowStack()
         try WinActivate(activeHwnd)
+        catch
+            ; Failed to reactivate
     }
 }
 
