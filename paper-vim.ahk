@@ -19,6 +19,12 @@ CoordMode "ToolTip", "Screen"
 ; ==============================================================================
 ; CONFIGURATION & GLOBAL VARIABLES
 ; ==============================================================================
+; Best Practices Applied:
+; - All global variables declared with 'global' keyword for clarity
+; - Named constants used instead of magic numbers
+; - Configuration values grouped by category
+; - Sensible defaults that work on most systems
+; - Values use screen-relative calculations where possible
 
 ; --- Window Layout Configuration ---
 global WindowStack := []              ; Array of managed window handles
@@ -408,10 +414,12 @@ ShouldManageWindow(hwnd) {
 ; Reflow window positions in the stack
 ; Repositions all windows based on current layout mode and active window
 ReflowStack() {
-    ; Prevent interruptions during reflow
-    Critical
+    ; Prevent interruptions during reflow (thread-safe)
+    Critical "On"
+    
     if (WindowStack.Length == 0) {
         UpdateDock()
+        Critical "Off"
         return
     }
     activeHwnd := WinActive("A"), activeIndex := 0
@@ -435,6 +443,7 @@ ReflowStack() {
     ; After cleanup, check if we still have windows
     if (WindowStack.Length == 0) {
         UpdateDock()
+        Critical "Off"
         return
     }
 
@@ -445,6 +454,7 @@ ReflowStack() {
             activeIndex := 1
         } catch {
             UpdateDock()
+            Critical "Off"
             return
         }
     }
@@ -485,6 +495,7 @@ ReflowStack() {
     }
 
     UpdateDock()
+    Critical "Off"
 }
 
 ; ==============================================================================
@@ -615,18 +626,27 @@ ExecuteFind(isTill) {
     if (target == "")
         return
 
+    ; Save and clear clipboard
     oldClip := ClipboardAll()
     A_Clipboard := ""
+    
+    ; Copy current line
     Send "{Home}+{End}^c"
     if (ClipWait(0.5)) {
         lineText := A_Clipboard
         pos := InStr(lineText, target)
         if (pos > 0) {
             Send "{Home}"
-            loop (isTill ? pos - 2 : pos - 1)
-                Send "{Right}"
+            moveCount := isTill ? pos - 2 : pos - 1
+            ; Ensure we don't send negative moves
+            if (moveCount > 0) {
+                loop moveCount
+                    Send "{Right}"
+            }
         }
     }
+    
+    ; Restore clipboard
     A_Clipboard := oldClip
 }
 
@@ -671,6 +691,31 @@ ToggleTaskbar() {
     
     ; Recalculate all window heights after toggling taskbar
     ReflowStack()
+}
+
+; ==============================================================================
+; CLEANUP
+; ==============================================================================
+
+; Cleanup function called on script exit
+OnExit(CleanupAndExit)
+
+CleanupAndExit(ExitReason, ExitCode) {
+    ; Hide GUIs before exit
+    try VimGui.Destroy()
+    catch
+        ; Already destroyed
+    
+    try DockGui.Destroy()
+    catch
+        ; Already destroyed
+    
+    ; Show taskbar if it was hidden
+    if (TaskbarHidden) {
+        try WinShow("ahk_class Shell_TrayWnd")
+        catch
+            ; Failed to show taskbar
+    }
 }
 
 ; ==============================================================================
