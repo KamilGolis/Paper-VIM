@@ -1,7 +1,20 @@
+; ==============================================================================
+; Paper-VIM: Vim Keybindings + PaperWM Window Manager
+; Version: 1.0.0
+; Author: KamilGolis
+; Description: Combines vim-style navigation with PaperWM tiling window manager
+; License: MIT
+; ==============================================================================
+
 #Requires AutoHotkey v2.0
 #SingleInstance Force
 ; Remove delay between window operations for speed
 SetWinDelay -1
+; Improve performance for window operations
+SetControlDelay -1
+; Set coordinate mode to screen for consistency
+CoordMode "Mouse", "Screen"
+CoordMode "ToolTip", "Screen"
 
 ; ==============================================================================
 ; CONFIGURATION & GLOBAL VARIABLES
@@ -58,22 +71,47 @@ global DockUpdateDelay := 100         ; Delay for dock update after window chang
 global TooltipDuration := 1000        ; Tooltip display duration (ms)
 
 ; --- Window Style Constants ---
-global TitleBarMask := 0x00C00000     ; Window style mask for title bar detection
+global TitleBarMask := 0x00C00000     ; Window style mask for title bar detection (WS_CAPTION)
+global WS_POPUP := 0x80000000         ; Popup window style
+global WS_EX_TOOLWINDOW := 0x80       ; Tool window extended style
+global WS_EX_DLGMODALFRAME := 0x1     ; Dialog modal frame extended style
 
-; HUD Setup
+; --- Window Message Constants ---
+global WM_GETICON := 0x007F           ; Get window icon message
+global ICON_BIG := 0                  ; Large icon
+global ICON_SMALL2 := 2               ; Small icon (alternative)
+global GCL_HICON := -14               ; Get class icon
+
+; --- Shell Hook Event Constants ---
+global HSHELL_WINDOWCREATED := 1      ; Window created event
+global HSHELL_WINDOWDESTROYED := 2    ; Window destroyed event
+global HSHELL_WINDOWACTIVATED := 4    ; Window activated event
+global HSHELL_FLASH := 32772          ; Window flash event
+
+; ==============================================================================
+; GUI INITIALIZATION
+; ==============================================================================
+
+; HUD Setup - Mode indicator
 VimGui := Gui("+AlwaysOnTop -Caption +ToolWindow +LastFound")
 VimGui.BackColor := HUDBackgroundColor
 VimGui.SetFont("s16 w800", "Segoe UI")
 VimText := VimGui.Add("Text", "Center w" HUDWidth, "VIM: NORMAL")
 WinSetTransColor(HUDBackgroundColor, VimGui)
 
-; Dock HUD Setup
+; Dock HUD Setup - Window stack visualizer
 DockGui := Gui("+AlwaysOnTop -Caption +ToolWindow +LastFound")
 DockGui.BackColor := DockBackgroundColor
 WinSetTransColor(DockBackgroundColor, DockGui)
 DockGui.MarginX := DockMarginX
 DockGui.MarginY := DockMarginY
 
+; ==============================================================================
+; CORE FUNCTIONS
+; ==============================================================================
+
+; Update HUD display based on current mode
+; @param NewState - Mode value: 0=Off, 1=Normal, 2=Visual
 UpdateHUD(NewState) {
     global Mode := NewState
     if (Mode == 0) {
@@ -89,6 +127,9 @@ UpdateHUD(NewState) {
     }
 }
 
+; Display temporary message in HUD
+; @param Msg - Message to display
+; @param Duration - How long to show message (default: FlashDuration)
 FlashMessage(Msg, Duration := FlashDuration) {
     if (Mode > 0) {
         VimText.Opt(FlashMsgColor)
@@ -97,11 +138,17 @@ FlashMessage(Msg, Duration := FlashDuration) {
     }
 }
 
+; Update dock display with current window stack
+; Shows icons for windows around the active window with visual indicator
 UpdateDock() {
     global WindowStack, DockGui
 
     ; Destroy entire GUI and recreate to avoid duplicates
     try DockGui.Destroy()
+    catch as err {
+        ; Ignore destroy errors
+    }
+    
     DockGui := Gui("+AlwaysOnTop -Caption +ToolWindow +LastFound")
     DockGui.BackColor := DockBackgroundColor
     WinSetTransColor(DockBackgroundColor, DockGui)
@@ -126,7 +173,7 @@ UpdateDock() {
         return
     }
 
-    ; Helper function to wrap index
+    ; Helper function to wrap index for circular navigation
     WrapIndex(idx) {
         while (idx < 1)
             idx += WindowStack.Length
@@ -151,6 +198,9 @@ UpdateDock() {
             pic := DockGui.Add("Picture", "x" xPos " y0 w" DockIconSize " h" DockIconSize, iconPath)
             xPos += DockIconSize + DockIconSpacing
         }
+        catch as err
+            ; Skip windows that fail to get icon
+            continue
     }
 
     ; Add center icon (active window) - with underline
@@ -161,6 +211,9 @@ UpdateDock() {
         DockGui.Add("Text", "x" xPos " y" (DockIconSize + 2) " w" DockIconSize " h2 Background" ActiveIndicatorColor)
         xPos += DockIconSize + DockIconSpacing
     }
+    catch as err
+        ; Failed to add active window icon
+        return
 
     ; Add right icons (next windows)
     loop DockRightCount {
@@ -170,6 +223,9 @@ UpdateDock() {
             pic := DockGui.Add("Picture", "x" xPos " y0 w" DockIconSize " h" DockIconSize, iconPath)
             xPos += DockIconSize + DockIconSpacing
         }
+        catch as err
+            ; Skip windows that fail to get icon
+            continue
     }
 
     ; Calculate total width and position dock at screen center
@@ -179,33 +235,56 @@ UpdateDock() {
     DockGui.Show("x" dockX " y" DockPosY " w" totalWidth " h" (DockIconSize + 16) " NoActivate")
 }
 
+; Get icon path or handle for a window
+; @param hwnd - Window handle
+; @return Icon path or handle string
 GetWindowIconPath(hwnd) {
+    if (!hwnd)
+        return "*icon1 shell32.dll"
+    
     ; Try to get the window's icon
     ; First, try to get large icon
-    hIcon := SendMessage(0x007F, 0, 0, , hwnd) ; WM_GETICON, ICON_BIG
+    hIcon := 0
+    try hIcon := SendMessage(WM_GETICON, ICON_BIG, 0, , hwnd)
+    catch as err {
+        hIcon := 0
+    }
 
     if (!hIcon) {
         ; Try small icon
-        hIcon := SendMessage(0x007F, 2, 0, , hwnd) ; WM_GETICON, ICON_SMALL2
+        try hIcon := SendMessage(WM_GETICON, ICON_SMALL2, 0, , hwnd)
+        catch as err {
+            hIcon := 0
+        }
     }
 
     if (!hIcon) {
         ; Get icon from window class
-        hIcon := DllCall("GetClassLongPtr", "Ptr", hwnd, "Int", -14, "Ptr") ; GCL_HICON
+        try hIcon := DllCall("GetClassLongPtr", "Ptr", hwnd, "Int", GCL_HICON, "Ptr")
+        catch as err {
+            hIcon := 0
+        }
     }
 
     if (!hIcon) {
         ; Get icon from executable
         try {
             exePath := WinGetProcessPath(hwnd)
-            return exePath
+            if (exePath != "")
+                return exePath
+        }
+        catch as err {
+            ; Continue to default icon
         }
     }
 
     if (hIcon) {
-        ; Save icon to temp file and return path
+        ; Return icon handle
         try {
             return "HICON:" hIcon
+        }
+        catch as err {
+            ; Fall through to default
         }
     }
 
@@ -214,6 +293,7 @@ GetWindowIconPath(hwnd) {
 }
 
 ; Calculate available window height based on taskbar visibility
+; @return Available height in pixels
 GetAvailableHeight() {
     global BarHeight, Gap, TaskbarHeight, TaskbarHidden
     baseHeight := A_ScreenHeight - BarHeight - (3 * Gap)
@@ -225,61 +305,80 @@ GetAvailableHeight() {
 ; SHELL HOOK (AUTOMATION)
 ; ==============================================================================
 
-DllCall("RegisterShellHookWindow", "Ptr", A_ScriptHwnd)
+; Register shell hook to receive window creation/destruction events
+if (!DllCall("RegisterShellHookWindow", "Ptr", A_ScriptHwnd)) {
+    MsgBox("Failed to register shell hook. Window automation may not work properly.", "Error", "Icon!")
+}
 OnMessage(DllCall("RegisterWindowMessage", "Str", "SHELLHOOK"), ShellMessage)
 
+; Shell hook message handler
+; @param wParam - Message type (1=created, 2=destroyed, 4/32772=activated)
+; @param lParam - Window handle
 ShellMessage(wParam, lParam, *) {
-    if (wParam = 1)
-    ; Window Created
+    if (wParam = HSHELL_WINDOWCREATED)
+        ; Window Created
         ManageNewWindow(lParam)
-    if (wParam = 2)
-    ; Window Destroyed
+    else if (wParam = HSHELL_WINDOWDESTROYED)
+        ; Window Destroyed
         DeferredReflow()
-    if (wParam = 4 || wParam = 32772)
-    ; Window Activated
+    else if (wParam = HSHELL_WINDOWACTIVATED || wParam = HSHELL_FLASH)
+        ; Window Activated or Flashed
         DeferredReflow()
 }
 
+; Debounced window reflow to prevent excessive updates
 DeferredReflow() {
     global ReflowTimer
     if (ReflowTimer)
         SetTimer(ReflowTimer, 0)
     ReflowTimer := () => ReflowStack()
-    ; Debounce: wait before reflowing
+    ; Debounce: wait before reflowing to batch multiple updates
     SetTimer(ReflowTimer, -DebounceDelay)
 }
 
+; Add new window to management stack if it should be managed
+; @param hwnd - Window handle to potentially manage
 ManageNewWindow(hwnd) {
-    if !WinExist(hwnd)
+    if (!hwnd)
+        return
+    
+    if (!WinExist(hwnd))
         return
     
     ; Check if window should be managed
-    if !ShouldManageWindow(hwnd)
+    if (!ShouldManageWindow(hwnd))
         return
     
+    ; Check if already in stack
     for item in WindowStack
         if (item == hwnd)
             return
+    
     WindowStack.Push(hwnd)
     ReflowStack()
 }
 
 ; Determines if a window should be managed by the tiling system
+; @param hwnd - Window handle to check
+; @return Boolean indicating if window should be managed
 ShouldManageWindow(hwnd) {
+    if (!hwnd)
+        return false
+    
     try {
         style := WinGetStyle(hwnd)
         exStyle := WinGetExStyle(hwnd)
         
         ; Must have a title bar (WS_CAPTION)
-        if !(style & TitleBarMask)
+        if (!(style & TitleBarMask))
             return false
         
-        ; Exclude popup windows (WS_POPUP = 0x80000000)
-        if (style & 0x80000000)
+        ; Exclude popup windows
+        if (style & WS_POPUP)
             return false
         
-        ; Exclude tool windows (WS_EX_TOOLWINDOW = 0x80)
-        if (exStyle & 0x80)
+        ; Exclude tool windows
+        if (exStyle & WS_EX_TOOLWINDOW)
             return false
         
         ; Check if it's a child window (has a parent)
@@ -287,8 +386,8 @@ ShouldManageWindow(hwnd) {
         if (parent != 0)
             return false
         
-        ; Exclude dialog boxes (WS_EX_DLGMODALFRAME = 0x1)
-        if (exStyle & 0x1)
+        ; Exclude dialog boxes
+        if (exStyle & WS_EX_DLGMODALFRAME)
             return false
         
         ; Exclude specific Windows UI elements by class name
@@ -305,36 +404,46 @@ ShouldManageWindow(hwnd) {
         }
         
         return true
-    } catch {
+    } catch as err {
+        ; Log error for debugging (optional)
+        ; OutputDebug("ShouldManageWindow error: " err.Message)
         return false
     }
 }
 
+; Reflow window positions in the stack
+; Repositions all windows based on current layout mode and active window
 ReflowStack() {
-    ; Prevent interruptions during reflow
-    Critical
+    ; Prevent interruptions during reflow (thread-safe)
+    Critical "On"
+    
     if (WindowStack.Length == 0) {
         UpdateDock()
+        Critical "Off"
         return
     }
     activeHwnd := WinActive("A"), activeIndex := 0
 
-    ; Cleanup closed windows
+    ; Cleanup closed windows (iterate backwards to safely remove items)
     loop WindowStack.Length {
         idx := WindowStack.Length - A_Index + 1
         if (idx >= 1 && idx <= WindowStack.Length) {
             try {
-                if !WinExist(WindowStack[idx])
+                if (!WinExist(WindowStack[idx]))
                     WindowStack.RemoveAt(idx)
                 else if (WindowStack[idx] == activeHwnd)
                     activeIndex := idx
             }
+            catch as err
+                ; Error checking window, remove it
+                WindowStack.RemoveAt(idx)
         }
     }
 
     ; After cleanup, check if we still have windows
     if (WindowStack.Length == 0) {
         UpdateDock()
+        Critical "Off"
         return
     }
 
@@ -343,8 +452,9 @@ ReflowStack() {
         try {
             WinActivate(WindowStack[1])
             activeIndex := 1
-        } catch {
+        } catch as err {
             UpdateDock()
+            Critical "Off"
             return
         }
     }
@@ -361,6 +471,9 @@ ReflowStack() {
                 WinRestore(hwnd)
                 WinMove(0, overlayTop, A_ScreenWidth, overlayHeight, hwnd)
             }
+            catch as err
+                ; Skip windows that can't be moved
+                continue
         }
     } else {
         ; Calculate current available height based on taskbar visibility
@@ -375,21 +488,34 @@ ReflowStack() {
                 rawOffset += WindowStack.Length
             relativeOffset := rawOffset * (TargetWidth + Gap)
             try WinMove(CenterX + relativeOffset, V_Top, TargetWidth, currentHeight, hwnd)
+            catch as err
+                ; Skip windows that can't be moved
+                continue
         }
     }
 
     UpdateDock()
+    Critical "Off"
 }
 
 ; ==============================================================================
 ; NAVIGATION LOGIC
 ; ==============================================================================
 
+; Switch to a specific virtual desktop
+; @param Target - Desktop number to switch to (1-10)
 GoToDesktop(Target) {
     global CurrentDesktop, InitializedDesktops
+    
+    if (Target < 1 || Target > 10) {
+        FlashMessage("INVALID DESKTOP")
+        return
+    }
+    
     Diff := Target - CurrentDesktop
     if (Diff = 0)
         return
+    
     Key := (Diff > 0) ? "{Right}" : "{Left}"
     loop Abs(Diff) {
         Send("^#" . Key)
@@ -405,6 +531,8 @@ GoToDesktop(Target) {
     }
 }
 
+; Initialize windows on a desktop that hasn't been arranged yet
+; @param DesktopNum - Desktop number to initialize
 InitializeDesktop(DesktopNum) {
     global InitializedDesktops
     if (InitializedDesktops.Has(DesktopNum))
@@ -415,7 +543,13 @@ InitializeDesktop(DesktopNum) {
     FlashMessage("DESKTOP " . DesktopNum . " ARRANGED")
 }
 
+; Move active window to another desktop
+; @param direction - Direction to move (-1=left, 1=right)
 MoveWindowToDesktop(direction) {
+    if (direction != -1 && direction != 1) {
+        return
+    }
+    
     Send("#{Tab}")
     Sleep 450
     Send("+{F10}")
@@ -427,6 +561,8 @@ MoveWindowToDesktop(direction) {
     Send("{Esc}")
 }
 
+; Cycle through window stack
+; @param direction - Direction to cycle (1=next, -1=previous)
 CycleStack(direction) {
     if (WindowStack.Length <= 1)
         return
@@ -446,17 +582,22 @@ CycleStack(direction) {
         newIndex := 1
 
     try WinActivate(WindowStack[newIndex])
+    catch as err
+        ; Failed to activate window
+        return
+    
     ; ReflowStack will be triggered automatically via ShellMessage hook
     ; Update dock after window activation
     SetTimer(() => UpdateDock(), -DockUpdateDelay)
 }
 
+; Add all existing windows to the stack on startup or desktop switch
 InitializeExistingWindows() {
     windowList := WinGetList()
     for hwnd in windowList {
         try {
             ; Use the same filtering logic as ManageNewWindow
-            if !ShouldManageWindow(hwnd)
+            if (!ShouldManageWindow(hwnd))
                 continue
             
             title := WinGetTitle(hwnd)
@@ -469,11 +610,15 @@ InitializeExistingWindows() {
                     WindowStack.Push(hwnd)
             }
         }
+        catch as err
+            ; Skip windows that cause errors
+            continue
     }
     ReflowStack()
 }
 
-; Helper function for f and t commands
+; Helper function for f and t commands (find/till character)
+; @param isTill - If true, stop before character; if false, stop on character
 ExecuteFind(isTill) {
     ih := InputHook("L1 T2")
     ih.Start(), ih.Wait()
@@ -481,36 +626,64 @@ ExecuteFind(isTill) {
     if (target == "")
         return
 
+    ; Save and clear clipboard
     oldClip := ClipboardAll()
     A_Clipboard := ""
+    
+    ; Copy current line
     Send "{Home}+{End}^c"
-    if ClipWait(0.5) {
+    if (ClipWait(0.5)) {
         lineText := A_Clipboard
         pos := InStr(lineText, target)
         if (pos > 0) {
             Send "{Home}"
-            loop (isTill ? pos - 2 : pos - 1)
-                Send "{Right}"
+            moveCount := isTill ? pos - 2 : pos - 1
+            ; Ensure we don't send negative moves
+            if (moveCount > 0) {
+                loop moveCount
+                    Send "{Right}"
+            }
         }
     }
+    
+    ; Restore clipboard
     A_Clipboard := oldClip
 }
 
+; Toggle Windows taskbar visibility
 ToggleTaskbar() {
     global TaskbarHidden
     target := "ahk_class Shell_TrayWnd"
 
-    if !TaskbarHidden {
-        WinHide(target)
+    if (!TaskbarHidden) {
+        try WinHide(target)
+        catch as err
+            ; Taskbar hide failed
+            return
+        
         ; Also hide the Start Button (sometimes required on Win 10/11)
-        if WinExist("ahk_class Button")
-            WinHide("ahk_class Button")
+        try {
+            if (WinExist("ahk_class Button"))
+                WinHide("ahk_class Button")
+        }
+        catch as err
+            ; Start button hide failed
+        
         TaskbarHidden := true
         ToolTip("Taskbar: HIDDEN")
     } else {
-        WinShow(target)
-        if WinExist("ahk_class Button")
-            WinShow("ahk_class Button")
+        try WinShow(target)
+        catch as err
+            ; Taskbar show failed
+            return
+        
+        try {
+            if (WinExist("ahk_class Button"))
+                WinShow("ahk_class Button")
+        }
+        catch as err
+            ; Start button show failed
+        
         TaskbarHidden := false
         ToolTip("Taskbar: VISIBLE")
     }
@@ -521,21 +694,59 @@ ToggleTaskbar() {
 }
 
 ; ==============================================================================
+; CLEANUP
+; ==============================================================================
+
+; Cleanup function called on script exit
+OnExit(CleanupAndExit)
+
+CleanupAndExit(ExitReason, ExitCode) {
+    ; Hide GUIs before exit
+    try VimGui.Destroy()
+    catch as err {
+        ; Already destroyed
+    }
+    
+    try DockGui.Destroy()
+    catch as err {
+        ; Already destroyed
+    }
+    
+    ; Show taskbar if it was hidden
+    if (TaskbarHidden) {
+        try WinShow("ahk_class Shell_TrayWnd")
+        catch as err {
+            ; Failed to show taskbar
+        }
+    }
+}
+
+; ==============================================================================
 ; VIM MODE (HOTKEYS & LOCKDOWN)
 ; ==============================================================================
 
 ; Initialize existing windows on startup
-InitializeExistingWindows()
-; Mark current desktop as initialized
-InitializedDesktops[CurrentDesktop] := true
+try {
+    InitializeExistingWindows()
+    ; Mark current desktop as initialized
+    InitializedDesktops[CurrentDesktop] := true
+}
+catch as err {
+    MsgBox("Failed to initialize windows on startup: " err.Message, "Warning", "Icon!")
+}
 
-CapsLock:: UpdateHUD(Mode == 0 ? 1 : 0)
+; Toggle Vim mode with CapsLock
+CapsLock:: {
+    UpdateHUD(Mode == 0 ? 1 : 0)
+}
 
 #HotIf Mode > 0
 ; --- Virtual Desktops ---
 ^j:: {
     Send("^#+{Left}")
     global CurrentDesktop -= 1
+    if (CurrentDesktop < 1)
+        global CurrentDesktop := 1
     global InitializedDesktops
     if (!InitializedDesktops.Has(CurrentDesktop)) {
         SetTimer(() => InitializeDesktop(CurrentDesktop), -DesktopSwitchDelay)
@@ -544,6 +755,8 @@ CapsLock:: UpdateHUD(Mode == 0 ? 1 : 0)
 ^k:: {
     Send("^#+{Right}")
     global CurrentDesktop += 1
+    if (CurrentDesktop > 10)
+        global CurrentDesktop := 10
     global InitializedDesktops
     if (!InitializedDesktops.Has(CurrentDesktop)) {
         SetTimer(() => InitializeDesktop(CurrentDesktop), -DesktopSwitchDelay)
@@ -560,15 +773,24 @@ CapsLock:: UpdateHUD(Mode == 0 ? 1 : 0)
 ; --- Layout Control ---
 ^f:: {
     global OverlayMode := !OverlayMode
+    FlashMessage(OverlayMode ? "OVERLAY MODE" : "TILING MODE")
     ReflowStack()
 }
 ^+d:: {
+    if (WindowStack.Length == 0)
+        return
+    
     activeHwnd := WinActive("A")
-    for i, hwnd in WindowStack
+    if (!activeHwnd)
+        return
+    
+    for i, hwnd in WindowStack {
         if (hwnd == activeHwnd) {
             WindowStack.RemoveAt(i)
+            FlashMessage("WINDOW REMOVED")
             break
         }
+    }
     ReflowStack()
 }
 ; Ctrl + T to toggle Taskbar visibility
@@ -576,33 +798,57 @@ CapsLock:: UpdateHUD(Mode == 0 ? 1 : 0)
 
 ; --- Reordering ---
 ^h:: {
-    activeHwnd := WinActive("A"), idx := 0
-    for i, hwnd in WindowStack
+    if (WindowStack.Length <= 1)
+        return
+    
+    activeHwnd := WinActive("A")
+    if (!activeHwnd)
+        return
+    
+    idx := 0
+    for i, hwnd in WindowStack {
         if (hwnd == activeHwnd) {
             idx := i
             break
         }
+    }
+    
     if (idx > 1) {
         temp := WindowStack[idx - 1]
         WindowStack[idx - 1] := WindowStack[idx]
         WindowStack[idx] := temp
         ReflowStack()
         try WinActivate(activeHwnd)
+        catch as err {
+            ; Failed to reactivate
+        }
     }
 }
 ^l:: {
-    activeHwnd := WinActive("A"), idx := 0
-    for i, hwnd in WindowStack
+    if (WindowStack.Length <= 1)
+        return
+    
+    activeHwnd := WinActive("A")
+    if (!activeHwnd)
+        return
+    
+    idx := 0
+    for i, hwnd in WindowStack {
         if (hwnd == activeHwnd) {
             idx := i
             break
         }
+    }
+    
     if (idx > 0 && idx < WindowStack.Length) {
         temp := WindowStack[idx + 1]
         WindowStack[idx + 1] := WindowStack[idx]
         WindowStack[idx] := temp
         ReflowStack()
         try WinActivate(activeHwnd)
+        catch as err {
+            ; Failed to reactivate
+        }
     }
 }
 
