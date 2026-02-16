@@ -33,6 +33,8 @@ global TaskbarHidden := false         ; Track Windows taskbar visibility state
 
 ; --- Vim Mode State ---
 global Mode := 0                      ; 0=Off, 1=Normal, 2=Visual
+global Suspended := false             ; Script suspension state (pauses all actions)
+global SuspendedState := Map()        ; Stores window state before suspension
 
 ; --- Desktop Management ---
 global CurrentDesktop := 1            ; Currently active virtual desktop number
@@ -45,7 +47,15 @@ global DockBackgroundColor := "1a1a1a"    ; Dock background (darker gray)
 global NormalModeColor := "c00FF00"       ; Normal mode text color (green)
 global VisualModeColor := "cFF0000"       ; Visual mode text color (red)
 global FlashMsgColor := "cFFFF00"         ; Flash message color (yellow)
+global SuspendedModeColor := "cFF8800"    ; Suspended mode text color (orange)
 global ActiveIndicatorColor := "00FF00"   ; Dock active window underline (green)
+global DockInactiveNumberColor := "c888888" ; Dock inactive window number color (gray)
+
+; --- Font Configuration ---
+global FontFamily := "Segoe UI"          ; Font family used throughout UI
+global HUDFontSize := "s16"              ; HUD text size
+global HUDFontWeight := "w800"           ; HUD text weight (bold)
+global DockNumberFontSize := "s8"        ; Dock window number text size
 
 ; --- Dock Configuration ---
 global DockIconSize := 32             ; Size of dock icons in pixels
@@ -95,7 +105,7 @@ global HSHELL_FLASH := 32772          ; Window flash event
 ; HUD Setup - Mode indicator
 VimGui := Gui("+AlwaysOnTop -Caption +ToolWindow +LastFound")
 VimGui.BackColor := HUDBackgroundColor
-VimGui.SetFont("s16 w800", "Segoe UI")
+VimGui.SetFont(HUDFontSize " " HUDFontWeight, FontFamily)
 VimText := VimGui.Add("Text", "Center w" HUDWidth, "VIM: NORMAL")
 WinSetTransColor(HUDBackgroundColor, VimGui)
 
@@ -114,6 +124,15 @@ DockGui.MarginY := DockMarginY
 ; @param NewState - Mode value: 0=Off, 1=Normal, 2=Visual
 UpdateHUD(NewState) {
     global Mode := NewState
+    
+    ; If suspended, always show suspended state
+    if (Suspended) {
+        VimText.Opt(SuspendedModeColor)
+        VimText.Value := "SUSPENDED"
+        VimGui.Show("x" HUDPosX " y" HUDPosY " NoActivate")
+        return
+    }
+    
     if (Mode == 0) {
         VimGui.Hide()
     } else if (Mode == 1) {
@@ -131,10 +150,91 @@ UpdateHUD(NewState) {
 ; @param Msg - Message to display
 ; @param Duration - How long to show message (default: FlashDuration)
 FlashMessage(Msg, Duration := FlashDuration) {
-    if (Mode > 0) {
+    if (Mode > 0 && !Suspended) {
         VimText.Opt(FlashMsgColor)
         VimText.Value := Msg
         SetTimer(() => UpdateHUD(Mode), -Duration)
+    }
+}
+
+; Toggle script suspension state
+; When suspended, all window management actions are paused
+; Resume by pressing Ctrl+Q again or CapsLock to enter Vim mode
+ToggleSuspend() {
+    global Suspended, SuspendedState, OverlayMode, WindowStack
+    
+    if (!Suspended) {
+        ; === SUSPENDING ===
+        ; Save current state
+        SuspendedState := Map()
+        SuspendedState["OverlayMode"] := OverlayMode
+        SuspendedState["WindowPositions"] := []
+        
+        ; Save current window positions
+        for hwnd in WindowStack {
+            try {
+                WinGetPos(&x, &y, &w, &h, hwnd)
+                SuspendedState["WindowPositions"].Push(Map(
+                    "hwnd", hwnd,
+                    "x", x,
+                    "y", y,
+                    "width", w,
+                    "height", h
+                ))
+            }
+            catch as err {
+                ; Skip windows that can't be queried
+                continue
+            }
+        }
+        
+        ; Apply overlay mode (fullscreen windows)
+        if (!OverlayMode) {
+            OverlayMode := true
+            ReflowStack()  ; Apply overlay positioning
+        }
+        
+        ; Now suspend
+        Suspended := true
+        
+        ; Show suspended notification
+        VimText.Opt(SuspendedModeColor)
+        VimText.Value := "SUSPENDED"
+        VimGui.Show("x" HUDPosX " y" HUDPosY " NoActivate")
+        
+        ; Hide dock when suspended
+        try DockGui.Hide()
+        catch as err {
+            ; Ignore if dock doesn't exist
+        }
+    } else {
+        ; === RESUMING ===
+        Suspended := false
+        
+        ; Restore previous overlay mode state
+        if (SuspendedState.Has("OverlayMode")) {
+            OverlayMode := SuspendedState["OverlayMode"]
+        }
+        
+        ; Restore window positions if we have them
+        if (SuspendedState.Has("WindowPositions")) {
+            for winData in SuspendedState["WindowPositions"] {
+                try {
+                    WinMove(winData["x"], winData["y"], winData["width"], winData["height"], winData["hwnd"])
+                }
+                catch as err {
+                    ; Skip windows that can't be moved
+                    continue
+                }
+            }
+        }
+        
+        ; Clear saved state
+        SuspendedState := Map()
+        
+        ; Resume normal operation
+        UpdateHUD(Mode)
+        UpdateDock()
     }
 }
 
@@ -184,6 +284,7 @@ UpdateDock() {
 
     ; Build the dock from left to right
     xPos := 0
+    numberYPos := DockIconSize + 4  ; Position for number labels below icons
 
     ; Add left icons (previous windows, in correct order)
     leftIndices := []
@@ -196,6 +297,9 @@ UpdateDock() {
         try {
             iconPath := GetWindowIconPath(WindowStack[idx])
             pic := DockGui.Add("Picture", "x" xPos " y0 w" DockIconSize " h" DockIconSize, iconPath)
+            ; Add number label below icon
+            DockGui.SetFont(DockNumberFontSize " " DockInactiveNumberColor, FontFamily)
+            DockGui.Add("Text", "x" xPos " y" numberYPos " w" DockIconSize " Center", idx)
             xPos += DockIconSize + DockIconSpacing
         }
         catch as err
@@ -203,12 +307,15 @@ UpdateDock() {
             continue
     }
 
-    ; Add center icon (active window) - with underline
+    ; Add center icon (active window) - with underline and number
     try {
         iconPath := GetWindowIconPath(WindowStack[activeIndex])
         pic := DockGui.Add("Picture", "x" xPos " y0 w" DockIconSize " h" DockIconSize, iconPath)
         ; Add underline below active icon
         DockGui.Add("Text", "x" xPos " y" (DockIconSize + 2) " w" DockIconSize " h2 Background" ActiveIndicatorColor)
+        ; Add number label below underline with active color
+        DockGui.SetFont(DockNumberFontSize " c" ActiveIndicatorColor, FontFamily)
+        DockGui.Add("Text", "x" xPos " y" numberYPos " w" DockIconSize " Center", activeIndex)
         xPos += DockIconSize + DockIconSpacing
     }
     catch as err
@@ -221,6 +328,9 @@ UpdateDock() {
         try {
             iconPath := GetWindowIconPath(WindowStack[idx])
             pic := DockGui.Add("Picture", "x" xPos " y0 w" DockIconSize " h" DockIconSize, iconPath)
+            ; Add number label below icon
+            DockGui.SetFont(DockNumberFontSize " " DockInactiveNumberColor, FontFamily)
+            DockGui.Add("Text", "x" xPos " y" numberYPos " w" DockIconSize " Center", idx)
             xPos += DockIconSize + DockIconSpacing
         }
         catch as err
@@ -231,8 +341,9 @@ UpdateDock() {
     ; Calculate total width and position dock at screen center
     totalIcons := DockLeftCount + 1 + DockRightCount
     totalWidth := (totalIcons * DockIconSize) + ((totalIcons - 1) * DockIconSpacing) + 24
+    dockHeight := DockIconSize + 24  ; Increased height to accommodate numbers
     dockX := (A_ScreenWidth - totalWidth) / 2
-    DockGui.Show("x" dockX " y" DockPosY " w" totalWidth " h" (DockIconSize + 16) " NoActivate")
+    DockGui.Show("x" dockX " y" DockPosY " w" totalWidth " h" dockHeight " NoActivate")
 }
 
 ; Get icon path or handle for a window
@@ -315,15 +426,45 @@ OnMessage(DllCall("RegisterWindowMessage", "Str", "SHELLHOOK"), ShellMessage)
 ; @param wParam - Message type (1=created, 2=destroyed, 4/32772=activated)
 ; @param lParam - Window handle
 ShellMessage(wParam, lParam, *) {
+    ; Ignore all window events when suspended
+    if (Suspended)
+        return
+    
     if (wParam = HSHELL_WINDOWCREATED)
         ; Window Created
         ManageNewWindow(lParam)
     else if (wParam = HSHELL_WINDOWDESTROYED)
         ; Window Destroyed
         DeferredReflow()
-    else if (wParam = HSHELL_WINDOWACTIVATED || wParam = HSHELL_FLASH)
-        ; Window Activated or Flashed
+    else if (wParam = HSHELL_WINDOWACTIVATED || wParam = HSHELL_FLASH) {
+        ; Window Activated or Flashed (including taskbar clicks)
+        ; Ensure the activated window is properly focused
+        if (lParam && WinExist(lParam)) {
+            ; Check if this window is in our stack
+            isInStack := false
+            for hwnd in WindowStack {
+                if (hwnd == lParam) {
+                    isInStack := true
+                    break
+                }
+            }
+            
+            ; If it's a managed window, ensure it's properly activated
+            if (isInStack) {
+                try {
+                    ; Force the window to come to front and get focus
+                    WinActivate(lParam)
+                    ; Also ensure it's not minimized
+                    if (WinGetMinMax(lParam) = -1)
+                        WinRestore(lParam)
+                }
+                catch as err {
+                    ; Failed to activate, continue anyway
+                }
+            }
+        }
         DeferredReflow()
+    }
 }
 
 ; Debounced window reflow to prevent excessive updates
@@ -414,6 +555,10 @@ ShouldManageWindow(hwnd) {
 ; Reflow window positions in the stack
 ; Repositions all windows based on current layout mode and active window
 ReflowStack() {
+    ; Don't reflow when suspended
+    if (Suspended)
+        return
+    
     ; Prevent interruptions during reflow (thread-safe)
     Critical "On"
     
@@ -507,6 +652,10 @@ ReflowStack() {
 GoToDesktop(Target) {
     global CurrentDesktop, InitializedDesktops
     
+    ; Don't switch desktops when suspended
+    if (Suspended)
+        return
+    
     if (Target < 1 || Target > 10) {
         FlashMessage("INVALID DESKTOP")
         return
@@ -546,6 +695,10 @@ InitializeDesktop(DesktopNum) {
 ; Move active window to another desktop
 ; @param direction - Direction to move (-1=left, 1=right)
 MoveWindowToDesktop(direction) {
+    ; Don't move windows when suspended
+    if (Suspended)
+        return
+    
     if (direction != -1 && direction != 1) {
         return
     }
@@ -564,6 +717,10 @@ MoveWindowToDesktop(direction) {
 ; Cycle through window stack
 ; @param direction - Direction to cycle (1=next, -1=previous)
 CycleStack(direction) {
+    ; Don't cycle when suspended
+    if (Suspended)
+        return
+    
     if (WindowStack.Length <= 1)
         return
 
@@ -591,8 +748,35 @@ CycleStack(direction) {
     SetTimer(() => UpdateDock(), -DockUpdateDelay)
 }
 
+; Switch to window by index in stack
+; @param index - Window index (1-based)
+GoToWindowByIndex(index) {
+    ; Don't switch windows when suspended
+    if (Suspended)
+        return
+    
+    if (WindowStack.Length == 0 || index < 1 || index > WindowStack.Length) {
+        FlashMessage("WINDOW " . index . " NOT FOUND")
+        return
+    }
+
+    try {
+        WinActivate(WindowStack[index])
+        FlashMessage("WINDOW " . index)
+        ; Update dock after window activation
+        SetTimer(() => UpdateDock(), -DockUpdateDelay)
+    }
+    catch as err {
+        FlashMessage("FAILED TO ACTIVATE")
+    }
+}
+
 ; Add all existing windows to the stack on startup or desktop switch
 InitializeExistingWindows() {
+    ; Don't initialize when suspended
+    if (Suspended)
+        return
+    
     windowList := WinGetList()
     for hwnd in windowList {
         try {
@@ -652,6 +836,10 @@ ExecuteFind(isTill) {
 
 ; Toggle Windows taskbar visibility
 ToggleTaskbar() {
+    ; Don't toggle taskbar when suspended
+    if (Suspended)
+        return
+    
     global TaskbarHidden
     target := "ahk_class Shell_TrayWnd"
 
@@ -737,10 +925,17 @@ catch as err {
 
 ; Toggle Vim mode with CapsLock
 CapsLock:: {
-    UpdateHUD(Mode == 0 ? 1 : 0)
+    ; If suspended, resume by calling ToggleSuspend and enter Normal mode
+    if (Suspended) {
+        ToggleSuspend()  ; This will restore window positions
+        UpdateHUD(1)     ; Enter Normal mode
+    } else {
+        ; Normal toggle behavior
+        UpdateHUD(Mode == 0 ? 1 : 0)
+    }
 }
 
-#HotIf Mode > 0
+#HotIf Mode > 0 && !Suspended
 ; --- Virtual Desktops ---
 ^j:: {
     Send("^#+{Left}")
@@ -770,7 +965,11 @@ CapsLock:: {
 ^+j:: MoveWindowToDesktop(-1)
 ^+k:: MoveWindowToDesktop(1)
 
+#HotIf Mode > 0
 ; --- Layout Control ---
+^q:: ToggleSuspend()  ; Toggle script suspension
+
+#HotIf Mode > 0 && !Suspended
 ^f:: {
     global OverlayMode := !OverlayMode
     FlashMessage(OverlayMode ? "OVERLAY MODE" : "TILING MODE")
@@ -886,7 +1085,7 @@ i:: UpdateHUD(0)
 Esc:: UpdateHUD(0)
 
 ; --- Normal Mode Commands ---
-#HotIf Mode == 1
+#HotIf Mode == 1 && !Suspended
 ; Document Navigation
 g:: {
     if (A_PriorHotkey == "g" and A_TimeSincePriorHotkey < DblClickTimeout)
@@ -947,10 +1146,21 @@ SC027:: { ; ':' key
         }
     }
 }
+
+; Window Navigation by Number
+1:: GoToWindowByIndex(1)
+2:: GoToWindowByIndex(2)
+3:: GoToWindowByIndex(3)
+4:: GoToWindowByIndex(4)
+5:: GoToWindowByIndex(5)
+6:: GoToWindowByIndex(6)
+7:: GoToWindowByIndex(7)
+8:: GoToWindowByIndex(8)
+9:: GoToWindowByIndex(9)
 #HotIf
 
 ; --- Visual Mode Commands ---
-#HotIf Mode == 2
+#HotIf Mode == 2 && !Suspended
 d:: Send("{BackSpace}"), UpdateHUD(1)
 c:: Send("{BackSpace}"), UpdateHUD(0)
 y:: Send("^c"), UpdateHUD(1), FlashMessage("YANKED")
