@@ -111,10 +111,6 @@ Numbers:     3   4   5   1   2
 - **Ctrl+K**: Switch to next virtual desktop
 - **Ctrl+1** through **Ctrl+5**: Jump directly to desktop 1-5
 
-### Moving Windows Between Desktops
-- **Ctrl+Shift+J**: Move active window to previous desktop
-- **Ctrl+Shift+K**: Move active window to next desktop
-
 ### Auto-Arrangement
 - On startup, arranges all windows on your current desktop
 - When switching to a new desktop, automatically arranges its windows

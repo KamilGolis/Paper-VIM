@@ -692,28 +692,6 @@ InitializeDesktop(DesktopNum) {
     FlashMessage("DESKTOP " . DesktopNum . " ARRANGED")
 }
 
-; Move active window to another desktop
-; @param direction - Direction to move (-1=left, 1=right)
-MoveWindowToDesktop(direction) {
-    ; Don't move windows when suspended
-    if (Suspended)
-        return
-    
-    if (direction != -1 && direction != 1) {
-        return
-    }
-    
-    Send("#{Tab}")
-    Sleep 450
-    Send("+{F10}")
-    Sleep 150
-    Send("m")
-    Sleep 150
-    Send(direction = 1 ? "{Right}{Enter}" : "{Left}{Enter}")
-    Sleep 150
-    Send("{Esc}")
-}
-
 ; Cycle through window stack
 ; @param direction - Direction to cycle (1=next, -1=previous)
 CycleStack(direction) {
@@ -906,12 +884,57 @@ CleanupAndExit(ExitReason, ExitCode) {
         catch as err {
             ; Failed to show taskbar
         }
+        ; Also show the Start Button
+        try {
+            if (WinExist("ahk_class Button"))
+                WinShow("ahk_class Button")
+        }
+        catch as err {
+            ; Failed to show start button
+        }
     }
 }
 
 ; ==============================================================================
 ; VIM MODE (HOTKEYS & LOCKDOWN)
 ; ==============================================================================
+
+; Detect and initialize taskbar state on startup
+try {
+    ; Check if taskbar is currently visible
+    taskbarTarget := "ahk_class Shell_TrayWnd"
+    if (WinExist(taskbarTarget)) {
+        ; Try to detect if taskbar is hidden by checking if it's visible
+        try {
+            taskbarVisible := DllCall("IsWindowVisible", "Ptr", WinExist(taskbarTarget), "Int")
+            global TaskbarHidden := !taskbarVisible
+            
+            ; If taskbar was hidden from previous session, show it on startup
+            if (TaskbarHidden) {
+                WinShow(taskbarTarget)
+                ; Also show the Start Button
+                try {
+                    if (WinExist("ahk_class Button"))
+                        WinShow("ahk_class Button")
+                }
+                catch as err {
+                    ; Start button show failed
+                }
+                global TaskbarHidden := false
+                ToolTip("Taskbar: RESTORED ON STARTUP")
+                SetTimer(() => ToolTip(), -2000)
+            }
+        }
+        catch as err {
+            ; If detection fails, assume taskbar is visible
+            global TaskbarHidden := false
+        }
+    }
+}
+catch as err {
+    ; If taskbar detection fails, assume it's visible
+    global TaskbarHidden := false
+}
 
 ; Initialize existing windows on startup
 try {
@@ -938,7 +961,7 @@ CapsLock:: {
 #HotIf Mode > 0 && !Suspended
 ; --- Virtual Desktops ---
 ^j:: {
-    Send("^#+{Left}")
+    Send("^#{Left}")  ; Ctrl+Win+Left
     global CurrentDesktop -= 1
     if (CurrentDesktop < 1)
         global CurrentDesktop := 1
@@ -948,7 +971,7 @@ CapsLock:: {
     }
 }
 ^k:: {
-    Send("^#+{Right}")
+    Send("^#{Right}")  ; Ctrl+Win+Right
     global CurrentDesktop += 1
     if (CurrentDesktop > 10)
         global CurrentDesktop := 10
@@ -962,8 +985,6 @@ CapsLock:: {
 ^3:: GoToDesktop(3)
 ^4:: GoToDesktop(4)
 ^5:: GoToDesktop(5)
-^+j:: MoveWindowToDesktop(-1)
-^+k:: MoveWindowToDesktop(1)
 
 #HotIf Mode > 0
 ; --- Layout Control ---
