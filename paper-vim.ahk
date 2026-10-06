@@ -65,13 +65,13 @@ global DockRightCount := 2            ; Number of icons shown right of active
 global DockMarginX := 12              ; Dock horizontal margin
 global DockMarginY := 8               ; Dock vertical margin
 global DockPosY := 10                 ; Dock Y position from top
-global DockIcons := []                ; Array of dock icon controls
 
 ; --- HUD Configuration ---
 global HUDPosX := A_ScreenWidth - 240 ; HUD X position from left
 global HUDPosY := 40                  ; HUD Y position from top
 global HUDWidth := 220                ; HUD width in pixels
 global FlashDuration := 800           ; Flash message duration in milliseconds
+global FlashTimer := 0                ; Timer handle of the current flash restore
 
 ; --- Timing Configuration ---
 global DblClickTimeout := 400         ; Timeout for double-key commands (gg, dd, etc.)
@@ -96,7 +96,7 @@ global GCL_HICON := -14               ; Get class icon
 global HSHELL_WINDOWCREATED := 1      ; Window created event
 global HSHELL_WINDOWDESTROYED := 2    ; Window destroyed event
 global HSHELL_WINDOWACTIVATED := 4    ; Window activated event
-global HSHELL_FLASH := 32772          ; Window flash event
+global HSHELL_FLASH := 32772          ; Window flash event (HSHELL_WINDOWACTIVATED | HSHELL_HIGHBIT)
 
 ; ==============================================================================
 ; GUI INITIALIZATION
@@ -150,10 +150,15 @@ UpdateHUD(NewState) {
 ; @param Msg - Message to display
 ; @param Duration - How long to show message (default: FlashDuration)
 FlashMessage(Msg, Duration := FlashDuration) {
+    global FlashTimer
     if (Mode > 0 && !Suspended) {
         VimText.Opt(FlashMsgColor)
         VimText.Value := Msg
-        SetTimer(() => UpdateHUD(Mode), -Duration)
+        ; Cancel any pending restore so messages don't cut each other short
+        if (FlashTimer)
+            SetTimer(FlashTimer, 0)
+        FlashTimer := () => UpdateHUD(Mode)
+        SetTimer(FlashTimer, -Duration)
     }
 }
 
@@ -243,6 +248,24 @@ ToggleSuspend() {
 UpdateDock() {
     global WindowStack, DockGui
 
+    ; No managed windows: hide the dock
+    if (WindowStack.Length == 0) {
+        try DockGui.Hide()
+        catch as err {
+            ; Ignore hide errors
+        }
+        return
+    }
+
+    ; Get active window
+    activeIndex := GetStackIndex(WinActive("A"))
+
+    ; Active window is not managed: keep the dock as it is instead of
+    ; rebuilding a GUI that would never be shown
+    if (activeIndex == 0) {
+        return
+    }
+
     ; Destroy entire GUI and recreate to avoid duplicates
     try DockGui.Destroy()
     catch as err {
@@ -254,24 +277,6 @@ UpdateDock() {
     WinSetTransColor(DockBackgroundColor, DockGui)
     DockGui.MarginX := DockMarginX
     DockGui.MarginY := DockMarginY
-
-    if (WindowStack.Length == 0) {
-        return
-    }
-
-    ; Get active window
-    activeHwnd := WinActive("A")
-    activeIndex := 0
-    for i, hwnd in WindowStack {
-        if (hwnd == activeHwnd) {
-            activeIndex := i
-            break
-        }
-    }
-
-    if (activeIndex == 0) {
-        return
-    }
 
     ; Helper function to wrap index for circular navigation
     WrapIndex(idx) {
@@ -296,7 +301,7 @@ UpdateDock() {
     for idx in leftIndices {
         try {
             iconPath := GetWindowIconPath(WindowStack[idx])
-            pic := DockGui.Add("Picture", "x" xPos " y0 w" DockIconSize " h" DockIconSize, iconPath)
+            DockGui.Add("Picture", "x" xPos " y0 w" DockIconSize " h" DockIconSize, iconPath)
             ; Add number label below icon
             DockGui.SetFont(DockNumberFontSize " " DockInactiveNumberColor, FontFamily)
             DockGui.Add("Text", "x" xPos " y" numberYPos " w" DockIconSize " Center", idx)
@@ -310,7 +315,7 @@ UpdateDock() {
     ; Add center icon (active window) - with underline and number
     try {
         iconPath := GetWindowIconPath(WindowStack[activeIndex])
-        pic := DockGui.Add("Picture", "x" xPos " y0 w" DockIconSize " h" DockIconSize, iconPath)
+        DockGui.Add("Picture", "x" xPos " y0 w" DockIconSize " h" DockIconSize, iconPath)
         ; Add underline below active icon
         DockGui.Add("Text", "x" xPos " y" (DockIconSize + 2) " w" DockIconSize " h2 Background" ActiveIndicatorColor)
         ; Add number label below underline with active color
@@ -327,7 +332,7 @@ UpdateDock() {
         idx := WrapIndex(activeIndex + A_Index)
         try {
             iconPath := GetWindowIconPath(WindowStack[idx])
-            pic := DockGui.Add("Picture", "x" xPos " y0 w" DockIconSize " h" DockIconSize, iconPath)
+            DockGui.Add("Picture", "x" xPos " y0 w" DockIconSize " h" DockIconSize, iconPath)
             ; Add number label below icon
             DockGui.SetFont(DockNumberFontSize " " DockInactiveNumberColor, FontFamily)
             DockGui.Add("Text", "x" xPos " y" numberYPos " w" DockIconSize " Center", idx)
@@ -390,12 +395,16 @@ GetWindowIconPath(hwnd) {
     }
 
     if (hIcon) {
-        ; Return icon handle
+        ; Duplicate the icon before handing it to the GUI: the original
+        ; belongs to the target window, and the dock destroys icons it owns
+        ; when its controls are rebuilt
         try {
-            return "HICON:" hIcon
+            hCopy := DllCall("CopyIcon", "Ptr", hIcon, "Ptr")
+            if (hCopy)
+                return "HICON:" hCopy
         }
         catch as err {
-            ; Fall through to default
+            ; Fall through to default icon
         }
     }
 
@@ -437,32 +446,10 @@ ShellMessage(wParam, lParam, *) {
         ; Window Destroyed
         DeferredReflow()
     else if (wParam = HSHELL_WINDOWACTIVATED || wParam = HSHELL_FLASH) {
-        ; Window Activated or Flashed (including taskbar clicks)
-        ; Ensure the activated window is properly focused
-        if (lParam && WinExist(lParam)) {
-            ; Check if this window is in our stack
-            isInStack := false
-            for hwnd in WindowStack {
-                if (hwnd == lParam) {
-                    isInStack := true
-                    break
-                }
-            }
-            
-            ; If it's a managed window, ensure it's properly activated
-            if (isInStack) {
-                try {
-                    ; Force the window to come to front and get focus
-                    WinActivate(lParam)
-                    ; Also ensure it's not minimized
-                    if (WinGetMinMax(lParam) = -1)
-                        WinRestore(lParam)
-                }
-                catch as err {
-                    ; Failed to activate, continue anyway
-                }
-            }
-        }
+        ; Window activated or flashed (including taskbar clicks).
+        ; The window is already focused at this point; re-activating it would
+        ; fight the shell (Alt-Tab, Task View). Just reflow so the layout
+        ; and dock follow the focused window.
         DeferredReflow()
     }
 }
@@ -496,7 +483,18 @@ ManageNewWindow(hwnd) {
             return
     
     WindowStack.Push(hwnd)
-    ReflowStack()
+    DeferredReflow()
+}
+
+; Check if a window is cloaked by DWM (moved to another virtual desktop,
+; hidden by a UWP host shell, etc.)
+; @param hwnd - Window handle
+; @return True if the window is cloaked
+IsCloaked(hwnd) {
+    ; DWMWA_CLOAKED = 14
+    cloaked := 0
+    try DllCall("dwmapi\DwmGetWindowAttribute", "Ptr", hwnd, "UInt", 14, "UInt*", &cloaked, "UInt", 4)
+    return cloaked != 0
 }
 
 ; Determines if a window should be managed by the tiling system
@@ -529,6 +527,11 @@ ShouldManageWindow(hwnd) {
         
         ; Exclude dialog boxes
         if (exStyle & WS_EX_DLGMODALFRAME)
+            return false
+        
+        ; Exclude cloaked windows (windows on other virtual desktops, UWP
+        ; host shells) so we never tile windows we cannot see
+        if (IsCloaked(hwnd))
             return false
         
         ; Exclude specific Windows UI elements by class name
@@ -567,21 +570,29 @@ ReflowStack() {
         Critical "Off"
         return
     }
-    activeHwnd := WinActive("A"), activeIndex := 0
-
-    ; Cleanup closed windows (iterate backwards to safely remove items)
-    loop WindowStack.Length {
-        idx := WindowStack.Length - A_Index + 1
-        if (idx >= 1 && idx <= WindowStack.Length) {
-            try {
-                if (!WinExist(WindowStack[idx]))
-                    WindowStack.RemoveAt(idx)
-                else if (WindowStack[idx] == activeHwnd)
-                    activeIndex := idx
-            }
-            catch as err
-                ; Error checking window, remove it
+    activeHwnd := WinActive("A")
+    activeIndex := 0
+    
+    ; Cleanup closed windows (iterate backwards over a captured count, so
+    ; removals don't shift the indices of elements still to be visited)
+    activeRemoved := false
+    n := WindowStack.Length
+    loop n {
+        idx := n - A_Index + 1
+        try {
+            if (!WinExist(WindowStack[idx])) {
+                if (WindowStack[idx] == activeHwnd)
+                    activeRemoved := true
                 WindowStack.RemoveAt(idx)
+            }
+            else if (WindowStack[idx] == activeHwnd)
+                activeIndex := idx
+        }
+        catch as err {
+            ; Error checking window, remove it
+            if (WindowStack[idx] == activeHwnd)
+                activeRemoved := true
+            WindowStack.RemoveAt(idx)
         }
     }
 
@@ -592,12 +603,22 @@ ReflowStack() {
         return
     }
 
-    ; If active window was closed, activate the first window in stack
+    ; The active window is not in the stack
     if (activeIndex == 0) {
-        try {
-            WinActivate(WindowStack[1])
-            activeIndex := 1
-        } catch as err {
+        if (activeRemoved) {
+            ; The active managed window was closed: hand focus to the first
+            ; window in the stack
+            try {
+                WinActivate(WindowStack[1])
+                activeIndex := 1
+            } catch as err {
+                UpdateDock()
+                Critical "Off"
+                return
+            }
+        } else {
+            ; The active window is unmanaged (Start menu, dialog, popup):
+            ; keep the current layout instead of stealing focus
             UpdateDock()
             Critical "Off"
             return
@@ -624,6 +645,15 @@ ReflowStack() {
         ; Calculate current available height based on taskbar visibility
         currentHeight := GetAvailableHeight()
         for i, hwnd in WindowStack {
+            ; WinMove cannot move minimized windows; they keep their old
+            ; position and are repositioned by the reflow triggered when
+            ; they are restored
+            try {
+                if (WinGetMinMax(hwnd) = -1)
+                    continue
+            }
+            catch as err
+                continue
             ; Calculate circular distance for infinite scrolling
             rawOffset := i - activeIndex
             ; Wrap around: choose shortest path in circular arrangement
@@ -692,6 +722,18 @@ InitializeDesktop(DesktopNum) {
     FlashMessage("DESKTOP " . DesktopNum . " ARRANGED")
 }
 
+; Get the 1-based position of a window in the stack
+; @param hwnd - Window handle to locate
+; @return Position in WindowStack, or 0 if not found
+GetStackIndex(hwnd) {
+    if (!hwnd)
+        return 0
+    for i, item in WindowStack
+        if (item == hwnd)
+            return i
+    return 0
+}
+
 ; Cycle through window stack
 ; @param direction - Direction to cycle (1=next, -1=previous)
 CycleStack(direction) {
@@ -702,10 +744,7 @@ CycleStack(direction) {
     if (WindowStack.Length <= 1)
         return
 
-    activeHwnd := WinActive("A"), activeIndex := 0
-    for i, hwnd in WindowStack
-        if (hwnd == activeHwnd)
-            activeIndex := i
+    activeIndex := GetStackIndex(WinActive("A"))
 
     if (activeIndex == 0)
         return
@@ -1017,64 +1056,38 @@ CapsLock:: {
 ^t:: ToggleTaskbar()
 
 ; --- Reordering ---
-^h:: {
+; Swap the active window with its neighbour
+; @param dir - 1 = swap with right neighbour, -1 = swap with left neighbour
+SwapActive(dir) {
     if (WindowStack.Length <= 1)
         return
     
-    activeHwnd := WinActive("A")
-    if (!activeHwnd)
+    idx := GetStackIndex(WinActive("A"))
+    if (idx == 0)
         return
     
-    idx := 0
-    for i, hwnd in WindowStack {
-        if (hwnd == activeHwnd) {
-            idx := i
-            break
-        }
-    }
-    
-    if (idx > 1) {
-        temp := WindowStack[idx - 1]
-        WindowStack[idx - 1] := WindowStack[idx]
-        WindowStack[idx] := temp
-        ReflowStack()
-        try WinActivate(activeHwnd)
-        catch as err {
-            ; Failed to reactivate
-        }
-    }
-}
-^l:: {
-    if (WindowStack.Length <= 1)
+    j := idx + dir
+    if (j < 1 || j > WindowStack.Length)
         return
     
-    activeHwnd := WinActive("A")
-    if (!activeHwnd)
-        return
+    temp := WindowStack[j]
+    WindowStack[j] := WindowStack[idx]
+    WindowStack[idx] := temp
+    ReflowStack()
     
-    idx := 0
-    for i, hwnd in WindowStack {
-        if (hwnd == activeHwnd) {
-            idx := i
-            break
-        }
-    }
-    
-    if (idx > 0 && idx < WindowStack.Length) {
-        temp := WindowStack[idx + 1]
-        WindowStack[idx + 1] := WindowStack[idx]
-        WindowStack[idx] := temp
-        ReflowStack()
-        try WinActivate(activeHwnd)
-        catch as err {
-            ; Failed to reactivate
-        }
+    activeHwnd := WindowStack[j]
+    try WinActivate(activeHwnd)
+    catch as err {
+        ; Failed to reactivate
     }
 }
 
+^h:: SwapActive(-1)
+^l:: SwapActive(1)
+
 ; --- Navigation ---
 n:: CycleStack(1)
-p:: CycleStack(-1)
+Tab:: CycleStack(-1)  ; p is used for paste in Normal mode
 z:: ReflowStack()
 
 ; --- Vim Text Navigation ---
@@ -1084,7 +1097,7 @@ k:: Send(Mode == 2 ? "+{Up}" : "{Up}")
 l:: Send(Mode == 2 ? "+{Right}" : "{Right}")
 w:: Send(Mode == 2 ? "^+{Right}" : "^{Right}")
 b:: Send(Mode == 2 ? "^+{Left}" : "^{Left}")
-e:: Send(Mode == 2 ? "^+{Right}" : "^{Right}")
+e:: Send(Mode == 2 ? "^+{Right}+{Left}" : "^{Right}{Left}") ; word end (approximation)
 0:: Send(Mode == 2 ? "+{Home}" : "{Home}")
 +4:: Send(Mode == 2 ? "+{End}" : "{End}") ; '$' key
 ^d:: Send(Mode == 2 ? "+{PgDn}" : "{PgDn}") ; Page down
@@ -1112,7 +1125,7 @@ g:: {
     if (A_PriorHotkey == "g" and A_TimeSincePriorHotkey < DblClickTimeout)
         Send "^{Home}" ; 'gg'
 }
-+g:: Send "^{End}" ; 'G'
++g:: Send(Mode == 2 ? "+^{End}" : "^{End}") ; 'G' extends selection in visual mode
 
 ; Delete Commands
 d:: {
@@ -1153,6 +1166,10 @@ a:: Send("{Right}"), UpdateHUD(0)
 
 ; Command Line
 SC027:: { ; ':' key
+    ; Turn hotkeys off while the command box is open, so typed letters
+    ; (w, q) reach the box instead of firing hotkeys
+    prevMode := Mode
+    UpdateHUD(0)
     Result := InputBox("Command: w (save), q (quit), wq (save & quit)", "Vim Command", "h80 w300")
     if (Result.Result = "OK") {
         val := StrLower(Result.Value)
@@ -1166,6 +1183,9 @@ SC027:: { ; ':' key
             Send "!{F4}"
         }
     }
+    ; Restore previous mode unless a command already changed it
+    if (Mode == 0 && prevMode != 0)
+        UpdateHUD(prevMode)
 }
 
 ; Window Navigation by Number
