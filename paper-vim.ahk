@@ -58,7 +58,6 @@ global EmergencyMode := false         ; Set after an unhandled error; freezes la
 global EmergencyInProgress := false   ; Prevents recursive emergency-layout handling
 global HelpVisible := false           ; Keybind help overlay is open
 global HelpTargetHwnd := 0            ; Window to reactivate after help closes
-global HelpInputHook := ""            ; Catches the key that closes help
 
 ; --- Desktop Management ---
 global CurrentDesktop := 1            ; Currently active virtual desktop number
@@ -147,10 +146,15 @@ DockGui.MarginY := DockMarginY
 ; Keybind help overlay (hidden until F1 is pressed)
 HelpGui := Gui("+AlwaysOnTop -Caption +ToolWindow +Border")
 HelpGui.BackColor := "121212"
-HelpGui.MarginX := 20
-HelpGui.MarginY := 20
-HelpGui.SetFont("s10 cFFFFFF", "Consolas")
-HelpTextCtl := HelpGui.Add("Text", "w1050 -Wrap", "")
+HelpGui.MarginX := 0
+HelpGui.MarginY := 0
+HelpGui.SetFont("s9 cFFFFFF", "Consolas")
+helpLeftWidth := Min(720, Max(400, A_ScreenWidth - 800))
+helpRightWidth := Min(600, Max(320, A_ScreenWidth - helpLeftWidth - 100))
+helpHeight := Min(900, Max(500, A_ScreenHeight - 400))
+HelpLeftCtl := HelpGui.Add("Text", "x20 y20 w" helpLeftWidth " h" helpHeight " -Wrap", "")
+HelpRightCtl := HelpGui.Add("Text", "x" (20 + helpLeftWidth + 20) " y20 w" helpRightWidth " h" helpHeight " -Wrap", "")
+HelpGui.OnEvent("Close", (*) => DismissHelp())
 
 ; ==============================================================================
 ; CORE FUNCTIONS
@@ -231,16 +235,26 @@ LayoutFrozen() {
 
 ; --- Keybind Help -----------------------------------------------------------
 
-; Open the mode-scoped help overlay.
+; Toggle the combined keybind reference.
+ToggleHelp() {
+    if (HelpVisible)
+        DismissHelp()
+    else
+        ShowHelp()
+}
+
+; Show the combined keybind reference, marking the current Vim mode.
 ShowHelp() {
-    global HelpVisible, HelpGui, HelpTextCtl, HelpTargetHwnd, HelpInputHook
+    global HelpVisible, HelpGui, HelpLeftCtl, HelpRightCtl, HelpTargetHwnd
     global VimMode, VimGui
 
     if (HelpVisible || VimMode < 1 || VimMode > 3)
         return
 
     HelpTargetHwnd := WinActive("A")
-    HelpTextCtl.Value := BuildHelpText(VimMode)
+    panels := BuildHelpText(VimMode)
+    HelpLeftCtl.Value := panels[1]
+    HelpRightCtl.Value := panels[2]
     HelpVisible := true
     try VimGui.Hide()
     try {
@@ -248,132 +262,117 @@ ShowHelp() {
         WinActivate("ahk_id " HelpGui.Hwnd)
     } catch as err {
         DismissHelp()
-        return
     }
-
-    ; InputHook sees keys even if another window steals focus. The S option
-    ; suppresses the closing key so it cannot type into the restored app.
-    HelpInputHook := InputHook("L1")
-    HelpInputHook.KeyOpt("{All}", "E S")
-    try {
-        HelpInputHook.Start()
-        HelpInputHook.Wait()
-    } catch as err {
-    }
-    DismissHelp()
 }
 
 ; Close the help overlay and return to the Vim mode it was opened from.
 DismissHelp() {
-    global HelpVisible, HelpGui, HelpTargetHwnd, HelpInputHook, VimMode
+    global HelpVisible, HelpGui, HelpTargetHwnd, VimMode
 
     if (!HelpVisible)
         return
 
     HelpVisible := false
-    if (IsObject(HelpInputHook)) {
-        try HelpInputHook.Stop()
-        HelpInputHook := ""
-    }
     try HelpGui.Hide()
     if (HelpTargetHwnd && WinExist("ahk_id " HelpTargetHwnd))
         try WinActivate("ahk_id " HelpTargetHwnd)
     UpdateHUD(VimMode)
 }
 
-; Build the keybind text for one Vim mode.
-; @param mode - Vim mode: 1=Normal, 2=Visual, 3=Insert
-BuildHelpText(mode) {
-    modeName := (mode == 1) ? "NORMAL" : (mode == 2) ? "VISUAL" : "INSERT"
-    common := [
+; Build the combined keybind reference.
+; @param currentMode - Vim mode to mark: 1=Normal, 2=Visual, 3=Insert
+; @return Array: [left column text, right column text]
+BuildHelpText(currentMode) {
+    modeName := (currentMode == 1) ? "NORMAL" : (currentMode == 2) ? "VISUAL" : "INSERT"
+    normalTitle := "NORMAL MODE" . (currentMode == 1 ? "  << current" : "")
+    visualTitle := "VISUAL MODE" . (currentMode == 2 ? "  << current" : "")
+    insertTitle := "INSERT MODE" . (currentMode == 3 ? "  << current" : "")
+
+    leftLines := [
+        "Paper-VIM keybinds  |  current mode: " modeName,
+        "",
         "COMMON",
-        "  F1                      Show mode-scoped help",
+        "  F1                      Toggle this help",
         "  CapsLock                Toggle Vim mode on/off",
         "  Ctrl+Q                  Suspend / resume (not in emergency mode)",
-        ""
+        "",
+        normalTitle,
+        "  v                       Enter Visual",
+        "  i / a / A / o / O       Enter Insert (cursor / append / new line)",
+        "  Esc                     Nothing (stays Normal)",
+        "",
+        "NAVIGATION",
+        "  h j k l                 Left / down / up / right",
+        "  w b e                   Next word / previous word / end of word",
+        "  0 $                     Start / end of line",
+        "  gg G                    Start / end of document",
+        "  Ctrl+D / Ctrl+U         Page down / up",
+        "",
+        "EDITING",
+        "  x                       Delete character",
+        "  dd                      Delete line",
+        "  cc / cw                 Change line / word (then Insert)",
+        "  yy                      Yank line",
+        "  p                       Paste",
+        "  u / Ctrl+R              Undo / redo",
+        "",
+        "FIND",
+        "  f<char> / t<char>       Find / till character forward",
+        "  /                       Application find dialog",
+        "",
+        "COMMAND",
+        "  :                       Open command (Normal only)",
+        "  :w / :q / :wq           Save / close / save and close",
+        "  Semicolon (;)           Swallowed in Normal and Visual"
     ]
 
-    if (mode == 1) {
-        lines := [
-            "NORMAL MODE",
-            "  v                       Enter Visual",
-            "  i / a / A / o / O       Enter Insert (cursor / append / new line)",
-            "  Esc                     Nothing (stays Normal)",
-            "",
-            "NAVIGATION",
-            "  h j k l                 Left / down / up / right",
-            "  w b e                   Next word / previous word / end of word",
-            "  0 $                     Start / end of line",
-            "  gg G                    Start / end of document",
-            "  Ctrl+D / Ctrl+U         Page down / up",
-            "",
-            "EDITING",
-            "  x                       Delete character",
-            "  dd                      Delete line",
-            "  cc / cw                 Change line / word (then Insert)",
-            "  yy                      Yank line",
-            "  p                       Paste",
-            "  u / Ctrl+R              Undo / redo",
-            "",
-            "FIND",
-            "  f<char> / t<char>       Find / till character forward",
-            "  /                       Application find dialog",
-            "",
-            "COMMAND",
-            "  :                       Open command (Normal only)",
-            "  :w / :q / :wq           Save / close / save and close",
-            "  Semicolon (;)           Swallowed in Normal and Visual",
-            "",
-            "WINDOW MANAGEMENT",
-            "  n / Tab                 Next / previous window",
-            "  1-9                     Jump to window number",
-            "  Ctrl+H / Ctrl+L         Swap with left / right window",
-            "  Ctrl+Shift+1/2/3        Width 25% / 50% / 75%",
-            "  Ctrl+Shift+0            Full width (focus/peek)",
-            "  Ctrl+Shift+C            Center active window",
-            "  Ctrl+Shift+D            Remove active window from stack",
-            "  Ctrl+F                  Toggle overlay mode",
-            "  Ctrl+T                  Toggle taskbar",
-            "  z                       Reflow layout",
-            "",
-            "VIRTUAL DESKTOPS",
-            "  Ctrl+J / Ctrl+K         Previous / next desktop",
-            "  Ctrl+1-5                Jump to desktop 1-5"
-        ]
-    } else if (mode == 2) {
-        lines := [
-            "VISUAL MODE",
-            "  v / Esc                 Return to Normal",
-            "  h j k l                 Extend selection by character",
-            "  w b e                   Extend selection by word",
-            "  0 $                     Extend to line start / end",
-            "  gg / G                  Extend to document start / end",
-            "  Ctrl+D / Ctrl+U         Extend by page",
-            "  d / x                   Delete selection",
-            "  c                       Change selection (delete, then Insert)",
-            "  y                       Yank selection",
-            "  p                       Paste over selection",
-            "  i                       Collapse to selection start, then Insert",
-            "",
-            "Window management keys remain active; see Normal help for details.",
-            "Window-number keys 1-9 are Normal-only."
-        ]
-    } else {
-        lines := [
-            "INSERT MODE",
-            "  Esc                     Return to Normal",
-            "",
-            "Text input is passed through to the application.",
-            "Enter Insert from Normal with i, a, A, o, O, cc, or cw."
-        ]
-    }
+    rightLines := [
+        "WINDOW MANAGEMENT",
+        "  n / Tab                 Next / previous window",
+        "  1-9                     Jump to window number",
+        "  Ctrl+H / Ctrl+L         Swap with left / right window",
+        "  Ctrl+Shift+1/2/3        Width 25% / 50% / 75%",
+        "  Ctrl+Shift+0            Full width (focus/peek)",
+        "  Ctrl+Shift+C            Center active window",
+        "  Ctrl+Shift+D            Remove active window from stack",
+        "  Ctrl+F                  Toggle overlay mode",
+        "  Ctrl+T                  Toggle taskbar",
+        "  z                       Reflow layout",
+        "",
+        "VIRTUAL DESKTOPS",
+        "  Ctrl+J / Ctrl+K         Previous / next desktop",
+        "  Ctrl+1-5                Jump to desktop 1-5",
+        "",
+        visualTitle,
+        "  v / Esc                 Return to Normal",
+        "  h j k l                 Extend selection by character",
+        "  w b e                   Extend selection by word",
+        "  0 $                     Extend to line start / end",
+        "  gg / G                  Extend to document start / end",
+        "  Ctrl+D / Ctrl+U         Extend by page",
+        "  d / x                   Delete selection",
+        "  c                       Change selection (delete, then Insert)",
+        "  y                       Yank selection",
+        "  p                       Paste over selection",
+        "  i                       Collapse to selection start, then Insert",
+        "",
+        "Window management keys remain active (Normal section).",
+        "Window-number keys 1-9 are Normal-only.",
+        "",
+        insertTitle,
+        "  Esc                     Return to Normal",
+        "",
+        "Text input is passed through to the application.",
+        "Enter Insert from Normal with i, a, A, o, O, cc, or cw."
+    ]
 
-    text := "Paper-VIM help - " modeName "  |  press any key to close`n`n"
-    for line in common
-        text .= line "`n"
-    for line in lines
-        text .= line "`n"
-    return text
+    leftText := ""
+    for line in leftLines
+        leftText .= line "`n"
+    rightText := ""
+    for line in rightLines
+        rightText .= line "`n"
+    return [leftText, rightText]
 }
 
 ; Toggle script suspension state
@@ -1352,7 +1351,7 @@ ToggleTaskbar() {
 ; off-screen or behind each other in an unreachable horizontal row.
 EmergencyLayout() {
     global WindowStack, WorkLeft, WorkTop, WorkWidth, WorkHeight
-    global VimGui, DockGui, HelpGui, HelpVisible, HelpInputHook
+    global VimGui, DockGui, HelpGui, HelpVisible
     global EmergencyMargin, EmergencyMinWidth, EmergencyMinHeight
     global EmergencyMaxWidth, EmergencyMaxHeight
 
@@ -1364,10 +1363,6 @@ EmergencyLayout() {
         try DockGui.Hide()
     if (IsSet(HelpGui))
         try HelpGui.Hide()
-    if (IsObject(HelpInputHook)) {
-        try HelpInputHook.Stop()
-        HelpInputHook := ""
-    }
     HelpVisible := false
 
     availableWidth := WorkWidth
@@ -1428,12 +1423,7 @@ EmergencyOnError(err, mode) {
 OnExit(CleanupAndExit)
 
 CleanupAndExit(ExitReason, ExitCode) {
-    global EmergencyMode, HelpInputHook
-
-    if (IsObject(HelpInputHook)) {
-        try HelpInputHook.Stop()
-        HelpInputHook := ""
-    }
+    global EmergencyMode
 
     ; Retry the safe layout if the script is exiting because of an error.
     if (EmergencyMode || ExitReason = "Error")
@@ -1528,11 +1518,9 @@ catch as err {
 
 ; Toggle Vim mode with CapsLock
 CapsLock:: {
-    ; Any key closes help; CapsLock must not toggle the mode while it is open.
-    if (HelpVisible) {
-        DismissHelp()
+    ; F1 and Esc close help; CapsLock must not change the mode while it is open.
+    if (HelpVisible)
         return
-    }
 
     ; If suspended, resume by calling ToggleSuspend and enter Normal mode
     if (Suspended) {
@@ -1691,8 +1679,14 @@ g:: {
 #HotIf
 
 ; --- Escape (Normal, Visual, Insert) ---
-#HotIf (VimMode == 1 || VimMode == 2 || VimMode == 3) && !Suspended && !HelpVisible
+; Esc stays hot while help is open so it can close the overlay; the other
+; mode keys are disabled by !HelpVisible in their own contexts.
+#HotIf (VimMode == 1 || VimMode == 2 || VimMode == 3) && !Suspended
 Esc:: {
+    if (HelpVisible) {
+        DismissHelp()
+        return
+    }
     if (VimMode != 1)
         UpdateHUD(1)
     ; Normal mode: swallow Esc; Off mode: the hotkey is inactive
@@ -1817,8 +1811,8 @@ t:: return
 #HotIf
 
 ; --- Keybind Help ---
-#HotIf (VimMode == 1 || VimMode == 2 || VimMode == 3) && !Suspended && !EmergencyMode && !HelpVisible
-F1:: ShowHelp()
+#HotIf (VimMode == 1 || VimMode == 2 || VimMode == 3) && !Suspended && !EmergencyMode
+F1:: ToggleHelp()
 #HotIf
 
 #HotIf
