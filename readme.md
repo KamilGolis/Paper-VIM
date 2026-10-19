@@ -45,7 +45,7 @@ This script was born out of necessity. Unable to use Linux with my preferred set
 
 ### Window Navigation
 - **n**: Next window in stack
-- **p**: Previous window in stack
+- **Tab**: Previous window in stack
 - **1-9**: Jump directly to window at that position in stack
 - **z**: Reflow/refresh window layout
 - **Ctrl+Q**: Suspend/resume script (preserves window state)
@@ -68,7 +68,7 @@ The active window automatically centers on screen with a scrolling effect!
 
 ### Stack Operations
 - **n**: Cycle to next window (right)
-- **p**: Cycle to previous window (left)
+- **Tab**: Cycle to previous window (left)
 - **1-9**: Jump directly to window at position 1-9 in stack
 - **Ctrl+H**: Swap current window with the one on its left
 - **Ctrl+L**: Swap current window with the one on its right
@@ -84,7 +84,7 @@ A transparent dock at the top-center of your screen shows:
 - **5 window icons** in stack order
 - **Window numbers** below each icon (shows position in stack)
 - **Center icon** (underlined in green): Current active window with bright green number
-- **Left 2 icons**: Previous windows (press `p` to go left) with gray numbers
+- **Left 2 icons**: Previous windows (press `Tab` to go left) with gray numbers
 - **Right 2 icons**: Next windows (press `n` to go right) with gray numbers
 - **Infinite scrolling**: Icons wrap around at stack edges
 - **Direct access**: Press the number shown to jump to that window
@@ -403,7 +403,7 @@ If the dock shows blank spaces or default icons instead of app icons:
 
 ## 📝 Tips & Best Practices
 
-1. **Learn gradually**: Start with just `n`/`p` for window navigation
+1. **Learn gradually**: Start with just `n`/`Tab` for window navigation
 2. **Use the dock**: Visual feedback and window numbers help learn the window stack
 3. **Quick window switching**: Press the number shown in the dock to jump directly to a window
 4. **Combine modes**: Navigate with `hjkl`, select with `v`, edit normally
