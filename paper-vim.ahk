@@ -1,6 +1,6 @@
 ; ==============================================================================
 ; Paper-VIM: Vim Keybindings + PaperWM Window Manager
-; Version: 1.0.0
+; Version: 1.2.0
 ; Author: KamilGolis
 ; Description: Combines vim-style navigation with PaperWM tiling window manager
 ; License: MIT
@@ -22,17 +22,31 @@ CoordMode "ToolTip", "Screen"
 
 ; --- Window Layout Configuration ---
 global WindowStack := []              ; Array of managed window handles
-global TargetWidth := A_ScreenWidth * 0.95  ; Width of each window (95% of screen)
+global FullWidthRatio := 1.0          ; "Full" preset; selects the focus/peek layout
+global FocusWidthRatio := 0.85        ; Focus-mode window width (fraction of the viewport)
+; Focus mode uses the same Gap as the 25/50/75 tiling presets. The remaining
+; space becomes the visible slices of the previous and next windows.
+global WindowWidths := Map()          ; Per-window width ratio (hwnd -> 0.25..1.0)
+global ViewOffset := 0                ; Horizontal scroll offset of the window row (px)
 global Gap := 8                       ; Gap between windows and screen edges
-global CenterX := (A_ScreenWidth - TargetWidth) / 2  ; Horizontal center position
-global BarHeight := 60                ; Reserved space at top for HUD and dock
-global TaskbarHeight := 48            ; Windows taskbar height (for height calculations)
-global V_Top := 2 * Gap               ; Top Y position for windows
+global BarHeight := 60                ; Space reserved at the top for the HUD and dock
+global TaskbarMode := "auto"          ; auto, left, top, right, bottom, or none
+global TaskbarSize := 0               ; Fixed taskbar size in px (0 = 48); used with a fixed mode
 global OverlayMode := false           ; Toggle between tiling and overlay (fullscreen) mode
 global TaskbarHidden := false         ; Track Windows taskbar visibility state
 
+; --- Work Area (screen minus the taskbar) ---
+global TaskbarLeft := 0               ; Taskbar inset on each screen edge
+global TaskbarTop := 0
+global TaskbarRight := 0
+global TaskbarBottom := 0
+global WorkLeft := 0                  ; Usable area origin and size
+global WorkTop := 0
+global WorkWidth := A_ScreenWidth
+global WorkHeight := A_ScreenHeight
+
 ; --- Vim Mode State ---
-global Mode := 0                      ; 0=Off, 1=Normal, 2=Visual
+global VimMode := 0                   ; 0=Off, 1=Normal, 2=Visual, 3=Insert
 global Suspended := false             ; Script suspension state (pauses all actions)
 global SuspendedState := Map()        ; Stores window state before suspension
 
@@ -46,6 +60,7 @@ global HUDBackgroundColor := "121212"     ; VIM HUD background (dark gray)
 global DockBackgroundColor := "1a1a1a"    ; Dock background (darker gray)
 global NormalModeColor := "c00FF00"       ; Normal mode text color (green)
 global VisualModeColor := "cFF0000"       ; Visual mode text color (red)
+global InsertModeColor := "c00BFFF"       ; Insert mode text color (blue)
 global FlashMsgColor := "cFFFF00"         ; Flash message color (yellow)
 global SuspendedModeColor := "cFF8800"    ; Suspended mode text color (orange)
 global ActiveIndicatorColor := "00FF00"   ; Dock active window underline (green)
@@ -67,9 +82,9 @@ global DockMarginY := 8               ; Dock vertical margin
 global DockPosY := 10                 ; Dock Y position from top
 
 ; --- HUD Configuration ---
-global HUDPosX := A_ScreenWidth - 240 ; HUD X position from left
-global HUDPosY := 40                  ; HUD Y position from top
-global HUDWidth := 220                ; HUD width in pixels
+global HUDMarginRight := 20           ; HUD distance from the right edge of the work area
+global HUDPosY := 40                  ; HUD Y position from the top of the work area
+global HUDWidth := 220                ; HUD text control width; the window auto-sizes to the text
 global FlashDuration := 800           ; Flash message duration in milliseconds
 global FlashTimer := 0                ; Timer handle of the current flash restore
 
@@ -120,29 +135,48 @@ DockGui.MarginY := DockMarginY
 ; CORE FUNCTIONS
 ; ==============================================================================
 
-; Update HUD display based on current mode
-; @param NewState - Mode value: 0=Off, 1=Normal, 2=Visual
+; Show the HUD at the top-right of the work area. The HUD auto-sizes to its
+; text, so measure the real window width instead of using a fixed width.
+ShowHUDAtTopRight() {
+    global VimGui, WorkLeft, WorkWidth, WorkTop, HUDPosY, HUDMarginRight
+
+    VimGui.Show("Hide")
+    WinGetPos(&hx, &hy, &hudWidth, &hudHeight, VimGui.Hwnd)
+    hudX := WorkLeft + WorkWidth - hudWidth - HUDMarginRight
+    hudY := WorkTop + HUDPosY
+    VimGui.Show("x" hudX " y" hudY " NoActivate")
+}
+
+; Update HUD display based on current Vim mode
+; @param NewState - Vim mode value: 0=Off, 1=Normal, 2=Visual, 3=Insert
 UpdateHUD(NewState) {
-    global Mode := NewState
-    
+    global VimMode := NewState
+
+    ; Keep the HUD inside the usable area when the taskbar moves
+    RefreshWorkArea()
+
     ; If suspended, always show suspended state
     if (Suspended) {
         VimText.Opt(SuspendedModeColor)
         VimText.Value := "SUSPENDED"
-        VimGui.Show("x" HUDPosX " y" HUDPosY " NoActivate")
+        ShowHUDAtTopRight()
         return
     }
     
-    if (Mode == 0) {
+    if (VimMode == 0) {
         VimGui.Hide()
-    } else if (Mode == 1) {
+    } else if (VimMode == 1) {
         VimText.Opt(NormalModeColor)
         VimText.Value := "VIM: NORMAL"
-        VimGui.Show("x" HUDPosX " y" HUDPosY " NoActivate")
-    } else if (Mode == 2) {
+        ShowHUDAtTopRight()
+    } else if (VimMode == 2) {
         VimText.Opt(VisualModeColor)
         VimText.Value := "VIM: VISUAL"
-        VimGui.Show("x" HUDPosX " y" HUDPosY " NoActivate")
+        ShowHUDAtTopRight()
+    } else if (VimMode == 3) {
+        VimText.Opt(InsertModeColor)
+        VimText.Value := "VIM: INSERT"
+        ShowHUDAtTopRight()
     }
 }
 
@@ -151,13 +185,13 @@ UpdateHUD(NewState) {
 ; @param Duration - How long to show message (default: FlashDuration)
 FlashMessage(Msg, Duration := FlashDuration) {
     global FlashTimer
-    if (Mode > 0 && !Suspended) {
+    if (VimMode > 0 && !Suspended) {
         VimText.Opt(FlashMsgColor)
         VimText.Value := Msg
         ; Cancel any pending restore so messages don't cut each other short
         if (FlashTimer)
             SetTimer(FlashTimer, 0)
-        FlashTimer := () => UpdateHUD(Mode)
+        FlashTimer := () => UpdateHUD(VimMode)
         SetTimer(FlashTimer, -Duration)
     }
 }
@@ -203,9 +237,7 @@ ToggleSuspend() {
         Suspended := true
         
         ; Show suspended notification
-        VimText.Opt(SuspendedModeColor)
-        VimText.Value := "SUSPENDED"
-        VimGui.Show("x" HUDPosX " y" HUDPosY " NoActivate")
+        UpdateHUD(VimMode)
         
         ; Hide dock when suspended
         try DockGui.Hide()
@@ -238,7 +270,7 @@ ToggleSuspend() {
         SuspendedState := Map()
         
         ; Resume normal operation
-        UpdateHUD(Mode)
+        UpdateHUD(VimMode)
         UpdateDock()
     }
 }
@@ -247,6 +279,9 @@ ToggleSuspend() {
 ; Shows icons for windows around the active window with visual indicator
 UpdateDock() {
     global WindowStack, DockGui
+
+    ; Keep the dock centered inside the usable area when the taskbar moves
+    RefreshWorkArea()
 
     ; No managed windows: hide the dock
     if (WindowStack.Length == 0) {
@@ -343,12 +378,12 @@ UpdateDock() {
             continue
     }
 
-    ; Calculate total width and position dock at screen center
-    totalIcons := DockLeftCount + 1 + DockRightCount
-    totalWidth := (totalIcons * DockIconSize) + ((totalIcons - 1) * DockIconSpacing) + 24
-    dockHeight := DockIconSize + 24  ; Increased height to accommodate numbers
-    dockX := (A_ScreenWidth - totalWidth) / 2
-    DockGui.Show("x" dockX " y" DockPosY " w" totalWidth " h" dockHeight " NoActivate")
+    ; Show hidden first so AutoSize gives the real width, then center the dock
+    DockGui.Show("Hide")
+    WinGetPos(&dx, &dy, &dockWidth, &dockHeight, DockGui.Hwnd)
+    dockX := WorkLeft + (WorkWidth - dockWidth) / 2
+    dockY := WorkTop + DockPosY
+    DockGui.Show("x" dockX " y" dockY " NoActivate")
 }
 
 ; Get icon path or handle for a window
@@ -412,13 +447,114 @@ GetWindowIconPath(hwnd) {
     return "*icon1 shell32.dll"  ; Default Windows icon
 }
 
-; Calculate available window height based on taskbar visibility
+; Recalculate the usable screen area from the taskbar position.
+; The taskbar is detected with SHAppBarMessage(ABM_GETTASKBARPOS). TaskbarMode
+; and TaskbarSize are manual overrides for unusual setups:
+;   TaskbarMode: "auto" (default), "left", "top", "right", "bottom", "none"
+;   TaskbarSize: pixels for a fixed mode (0 = 48)
+RefreshWorkArea() {
+    global TaskbarHidden, TaskbarMode, TaskbarSize
+    global TaskbarLeft, TaskbarTop, TaskbarRight, TaskbarBottom
+    global WorkLeft, WorkTop, WorkWidth, WorkHeight
+
+    left := 0, top := 0, right := 0, bottom := 0
+    mode := StrLower(TaskbarMode)
+
+    if (!TaskbarHidden && mode != "none") {
+        if (mode == "auto") {
+            hwnd := WinExist("ahk_class Shell_TrayWnd")
+            if (hwnd) {
+                ptrSize := A_PtrSize
+                abdSize := (ptrSize == 8) ? 48 : 36
+                edgeOff := (ptrSize == 8) ? 20 : 12
+                rcOff := (ptrSize == 8) ? 24 : 16
+
+                ; An auto-hidden taskbar does not reserve any space
+                abd := Buffer(abdSize, 0)
+                NumPut("UInt", abdSize, abd, 0)
+                state := DllCall("shell32\SHAppBarMessage", "UInt", 4, "Ptr", abd)
+                autoHide := (state & 1)
+
+                if (!autoHide) {
+                    abd := Buffer(abdSize, 0)
+                    NumPut("UInt", abdSize, abd, 0)
+                    if (DllCall("shell32\SHAppBarMessage", "UInt", 5, "Ptr", abd)) {
+                        edge := NumGet(abd, edgeOff, "UInt")
+                        rLeft := NumGet(abd, rcOff, "Int")
+                        rTop := NumGet(abd, rcOff + 4, "Int")
+                        rRight := NumGet(abd, rcOff + 8, "Int")
+                        rBottom := NumGet(abd, rcOff + 12, "Int")
+                        if (edge == 0)          ; ABE_LEFT
+                            left := Max(0, rRight)
+                        else if (edge == 1)     ; ABE_TOP
+                            top := Max(0, rBottom)
+                        else if (edge == 2)     ; ABE_RIGHT
+                            right := Max(0, A_ScreenWidth - rLeft)
+                        else if (edge == 3)     ; ABE_BOTTOM
+                            bottom := Max(0, A_ScreenHeight - rTop)
+                    }
+
+                    ; Fall back to the taskbar window rectangle if the shell
+                    ; did not report a usable edge
+                    if (left == 0 && top == 0 && right == 0 && bottom == 0) {
+                        try {
+                            WinGetPos(&tx, &ty, &tw, &th, hwnd)
+                            if (tw > th) {
+                                if (ty <= 0)
+                                    top := th
+                                else
+                                    bottom := A_ScreenHeight - ty
+                            } else {
+                                if (tx <= 0)
+                                    left := tw
+                                else
+                                    right := A_ScreenWidth - tx
+                            }
+                        }
+                    }
+                }
+            }
+        } else if (mode == "left" || mode == "top" || mode == "right" || mode == "bottom") {
+            size := TaskbarSize > 0 ? TaskbarSize : 48
+            if (mode == "left")
+                left := size
+            else if (mode == "top")
+                top := size
+            else if (mode == "right")
+                right := size
+            else
+                bottom := size
+        }
+    }
+
+    ; Keep the work area valid even if the reported taskbar is unusually large
+    left := Max(0, Min(left, A_ScreenWidth - 1))
+    right := Max(0, Min(right, A_ScreenWidth - left - 1))
+    top := Max(0, Min(top, A_ScreenHeight - 1))
+    bottom := Max(0, Min(bottom, A_ScreenHeight - top - 1))
+
+    TaskbarLeft := left
+    TaskbarTop := top
+    TaskbarRight := right
+    TaskbarBottom := bottom
+    WorkLeft := left
+    WorkTop := top
+    WorkWidth := A_ScreenWidth - left - right
+    WorkHeight := A_ScreenHeight - top - bottom
+}
+
+; Calculate available window height inside the work area
 ; @return Available height in pixels
 GetAvailableHeight() {
-    global BarHeight, Gap, TaskbarHeight, TaskbarHidden
-    baseHeight := A_ScreenHeight - BarHeight - (3 * Gap)
-    ; If taskbar is hidden, add its height to available space
-    return TaskbarHidden ? baseHeight + TaskbarHeight : baseHeight
+    global BarHeight, Gap, WorkHeight
+    return Max(1, WorkHeight - BarHeight - (2 * Gap))
+}
+
+; Top Y position for tiled windows (below the HUD/dock strip)
+; @return Y position in pixels
+GetWindowTop() {
+    global BarHeight, Gap, WorkTop
+    return WorkTop + BarHeight + Gap
 }
 
 ; ==============================================================================
@@ -467,6 +603,7 @@ DeferredReflow() {
 ; Add new window to management stack if it should be managed
 ; @param hwnd - Window handle to potentially manage
 ManageNewWindow(hwnd) {
+    global WindowWidths
     if (!hwnd)
         return
     
@@ -483,6 +620,10 @@ ManageNewWindow(hwnd) {
             return
     
     WindowStack.Push(hwnd)
+    ; A newly created window starts at full width. Do not reset widths in
+    ; InitializeExistingWindows: that path also runs on desktop switches and
+    ; must preserve sizes the user has chosen.
+    WindowWidths[hwnd] := FullWidthRatio
     DeferredReflow()
 }
 
@@ -557,21 +698,30 @@ ShouldManageWindow(hwnd) {
 
 ; Reflow window positions in the stack
 ; Repositions all windows based on current layout mode and active window
-ReflowStack() {
+; @param centerActive - Center the active window instead of only scrolling
+;                       enough to keep it on screen
+ReflowStack(centerActive := false) {
+    global WindowWidths, ViewOffset
+
     ; Don't reflow when suspended
     if (Suspended)
         return
+
+    ; Taskbar position/size can change at any time (dock moved, auto-hide,
+    ; Ctrl+T); recalculate the usable area before placing windows
+    RefreshWorkArea()
     
     ; Prevent interruptions during reflow (thread-safe)
     Critical "On"
     
     if (WindowStack.Length == 0) {
+        ViewOffset := 0
+        WindowWidths.Clear()
         UpdateDock()
         Critical "Off"
         return
     }
     activeHwnd := WinActive("A")
-    activeIndex := 0
     
     ; Cleanup closed windows (iterate backwards over a captured count, so
     ; removals don't shift the indices of elements still to be visited)
@@ -583,21 +733,27 @@ ReflowStack() {
             if (!WinExist(WindowStack[idx])) {
                 if (WindowStack[idx] == activeHwnd)
                     activeRemoved := true
+                WindowWidths.Delete(WindowStack[idx])
                 WindowStack.RemoveAt(idx)
             }
-            else if (WindowStack[idx] == activeHwnd)
-                activeIndex := idx
         }
         catch as err {
             ; Error checking window, remove it
             if (WindowStack[idx] == activeHwnd)
                 activeRemoved := true
+            WindowWidths.Delete(WindowStack[idx])
             WindowStack.RemoveAt(idx)
         }
     }
 
+    ; Find the active window after cleanup, so removed windows cannot leave
+    ; the index pointing at the wrong element
+    activeIndex := GetStackIndex(activeHwnd)
+
     ; After cleanup, check if we still have windows
     if (WindowStack.Length == 0) {
+        ViewOffset := 0
+        WindowWidths.Clear()
         UpdateDock()
         Critical "Off"
         return
@@ -626,24 +782,62 @@ ReflowStack() {
     }
 
     if (OverlayMode) {
-        ; Small gap on top
-        overlayTop := Gap
-        ; Bottom gap depends on taskbar visibility
-        bottomGap := TaskbarHidden ? Gap : (Gap + TaskbarHeight)
-        ; Maximize height with small gaps
-        overlayHeight := A_ScreenHeight - overlayTop - bottomGap
+        ; Fill the usable area, leaving one gap at each edge
+        overlayLeft := WorkLeft + Gap
+        overlayTop := WorkTop + Gap
+        overlayWidth := Max(1, WorkWidth - (2 * Gap))
+        overlayHeight := Max(1, WorkHeight - (2 * Gap))
         for hwnd in WindowStack {
             try {
                 WinRestore(hwnd)
-                WinMove(0, overlayTop, A_ScreenWidth, overlayHeight, hwnd)
+                WinMove(overlayLeft, overlayTop, overlayWidth, overlayHeight, hwnd)
             }
             catch as err
                 ; Skip windows that can't be moved
                 continue
         }
     } else {
-        ; Calculate current available height based on taskbar visibility
+        ; Calculate current available height inside the work area
         currentHeight := GetAvailableHeight()
+        windowTop := GetWindowTop()
+
+        ; Full-width windows use a focus layout: 85% of the viewport. The
+        ; remaining space is split between the previous/next peeks, using the
+        ; same Gap as the 25/50/75 tiling presets for the gutters.
+        viewportWidth := WorkWidth - 2 * Gap
+        peekMode := (GetWindowWidthRatio(activeHwnd) >= 0.9999)
+
+        ; Lay the stack out as a single row: each window keeps its own width,
+        ; and the row scrolls horizontally like niri's scrolling layout.
+        widths := []
+        lefts := []
+        cursor := 0
+        for i, hwnd in WindowStack {
+            widths.Push(GetWindowWidth(hwnd))
+            lefts.Push(cursor)
+            cursor += widths[i] + Gap
+        }
+
+        activeLeft := lefts[activeIndex]
+        activeWidth := widths[activeIndex]
+        leftEdge := WorkLeft + Gap
+        rightEdge := WorkLeft + WorkWidth - Gap
+
+        if (peekMode || centerActive) {
+            ; Center the focused window. In peek mode the space left over
+            ; after the 85% window and the Gap becomes the neighbour peeks.
+            ViewOffset := Round(activeLeft + activeWidth / 2 - viewportWidth / 2)
+        } else {
+            ; Niri's default "never" centering: scroll only when the active
+            ; window would leave the screen, parking it at the screen edge.
+            screenLeft := leftEdge + activeLeft - ViewOffset
+            screenRight := screenLeft + activeWidth
+            if (screenLeft < leftEdge)
+                ViewOffset -= (leftEdge - screenLeft)
+            else if (screenRight > rightEdge)
+                ViewOffset += (screenRight - rightEdge)
+        }
+
         for i, hwnd in WindowStack {
             ; WinMove cannot move minimized windows; they keep their old
             ; position and are repositioned by the reflow triggered when
@@ -654,15 +848,8 @@ ReflowStack() {
             }
             catch as err
                 continue
-            ; Calculate circular distance for infinite scrolling
-            rawOffset := i - activeIndex
-            ; Wrap around: choose shortest path in circular arrangement
-            if (rawOffset > WindowStack.Length / 2)
-                rawOffset -= WindowStack.Length
-            else if (rawOffset < -WindowStack.Length / 2)
-                rawOffset += WindowStack.Length
-            relativeOffset := rawOffset * (TargetWidth + Gap)
-            try WinMove(CenterX + relativeOffset, V_Top, TargetWidth, currentHeight, hwnd)
+            x := Round(leftEdge + lefts[i] - ViewOffset)
+            try WinMove(x, windowTop, widths[i], currentHeight, hwnd)
             catch as err
                 ; Skip windows that can't be moved
                 continue
@@ -732,6 +919,63 @@ GetStackIndex(hwnd) {
         if (item == hwnd)
             return i
     return 0
+}
+
+; Get the width ratio remembered for a window
+; @param hwnd - Window handle
+; @return Width ratio relative to the work area width
+GetWindowWidthRatio(hwnd) {
+    global WindowWidths, FullWidthRatio
+    if (WindowWidths.Has(hwnd))
+        return WindowWidths[hwnd]
+    return FullWidthRatio
+}
+
+; Convert a width ratio into pixels for the current work area.
+; Gaps are subtracted from the proportion, so four 25% windows or two 50%
+; windows tile the screen exactly instead of overflowing by the gaps.
+; @param hwnd - Window handle
+; @return Window width in pixels
+GetWindowWidth(hwnd) {
+    global Gap, WorkWidth, FocusWidthRatio
+    ratio := GetWindowWidthRatio(hwnd)
+    if (ratio >= 0.9999) {
+        ; "Full" is the focus layout: 85% of the viewport. The gutter and
+        ; edge gaps are the shared Gap, so the rest is visible neighbour.
+        viewportWidth := WorkWidth - (2 * Gap)
+        return Round(viewportWidth * FocusWidthRatio)
+    }
+    return Round(WorkWidth * ratio - Gap * (1 + ratio))
+}
+
+; Remember a width for the active window and reflow the stack
+; @param ratio - Width ratio relative to the work area width
+; @param label - Text shown in the HUD flash message
+SetWindowWidthPreset(ratio, label) {
+    global WindowWidths
+    hwnd := WinActive("A")
+    if (!hwnd || GetStackIndex(hwnd) == 0) {
+        FlashMessage("NO MANAGED WINDOW")
+        return
+    }
+    WindowWidths[hwnd] := ratio
+    FlashMessage("WIDTH " label)
+    ReflowStack()
+}
+
+; Center the active window in the viewport (niri's center-column action)
+CenterActiveWindow() {
+    global OverlayMode
+    if (OverlayMode) {
+        FlashMessage("OVERLAY MODE")
+        return
+    }
+    if (GetStackIndex(WinActive("A")) == 0) {
+        FlashMessage("NO MANAGED WINDOW")
+        return
+    }
+    ReflowStack(true)
+    FlashMessage("CENTERED")
 }
 
 ; Cycle through window stack
@@ -894,8 +1138,10 @@ ToggleTaskbar() {
     }
     SetTimer(() => ToolTip(), -TooltipDuration)
     
-    ; Recalculate all window heights after toggling taskbar
+    ; Reflow against the new work area and move the HUD with it
     ReflowStack()
+    if (VimMode > 0)
+        UpdateHUD(VimMode)
 }
 
 ; ==============================================================================
@@ -975,6 +1221,9 @@ catch as err {
     global TaskbarHidden := false
 }
 
+; Detect the taskbar inset before the first layout
+RefreshWorkArea()
+
 ; Initialize existing windows on startup
 try {
     InitializeExistingWindows()
@@ -993,11 +1242,11 @@ CapsLock:: {
         UpdateHUD(1)     ; Enter Normal mode
     } else {
         ; Normal toggle behavior
-        UpdateHUD(Mode == 0 ? 1 : 0)
+        UpdateHUD(VimMode == 0 ? 1 : 0)
     }
 }
 
-#HotIf Mode > 0 && !Suspended
+#HotIf (VimMode == 1 || VimMode == 2) && !Suspended
 ; --- Virtual Desktops ---
 ^j:: {
     Send("^#{Left}")  ; Ctrl+Win+Left
@@ -1024,18 +1273,21 @@ CapsLock:: {
 ^3:: GoToDesktop(3)
 ^4:: GoToDesktop(4)
 ^5:: GoToDesktop(5)
+#HotIf
 
-#HotIf Mode > 0
+#HotIf VimMode > 0
 ; --- Layout Control ---
 ^q:: ToggleSuspend()  ; Toggle script suspension
+#HotIf
 
-#HotIf Mode > 0 && !Suspended
+#HotIf (VimMode == 1 || VimMode == 2) && !Suspended
 ^f:: {
     global OverlayMode := !OverlayMode
     FlashMessage(OverlayMode ? "OVERLAY MODE" : "TILING MODE")
     ReflowStack()
 }
 ^+d:: {
+    global WindowWidths
     if (WindowStack.Length == 0)
         return
     
@@ -1045,6 +1297,7 @@ CapsLock:: {
     
     for i, hwnd in WindowStack {
         if (hwnd == activeHwnd) {
+            WindowWidths.Delete(hwnd)
             WindowStack.RemoveAt(i)
             FlashMessage("WINDOW REMOVED")
             break
@@ -1090,42 +1343,71 @@ n:: CycleStack(1)
 Tab:: CycleStack(-1)  ; p is used for paste in Normal mode
 z:: ReflowStack()
 
-; --- Vim Text Navigation ---
-h:: Send(Mode == 2 ? "+{Left}" : "{Left}")
-j:: Send(Mode == 2 ? "+{Down}" : "{Down}")
-k:: Send(Mode == 2 ? "+{Up}" : "{Up}")
-l:: Send(Mode == 2 ? "+{Right}" : "{Right}")
-w:: Send(Mode == 2 ? "^+{Right}" : "^{Right}")
-b:: Send(Mode == 2 ? "^+{Left}" : "^{Left}")
-e:: Send(Mode == 2 ? "^+{Right}+{Left}" : "^{Right}{Left}") ; word end (approximation)
-0:: Send(Mode == 2 ? "+{Home}" : "{Home}")
-+4:: Send(Mode == 2 ? "+{End}" : "{End}") ; '$' key
-^d:: Send(Mode == 2 ? "+{PgDn}" : "{PgDn}") ; Page down
-^u:: Send(Mode == 2 ? "+{PgUp}" : "{PgUp}") ; Page up
+; --- Window Width & Centering (niri-style columns) ---
+^+1:: SetWindowWidthPreset(0.25, "25%")
+^+2:: SetWindowWidthPreset(0.50, "50%")
+^+3:: SetWindowWidthPreset(0.75, "75%")
+^+0:: SetWindowWidthPreset(FullWidthRatio, "FULL")
+^+c:: CenterActiveWindow()
 
-; --- Search & Find ---
+; --- Vim Text Navigation ---
+h:: Send(VimMode == 2 ? "+{Left}" : "{Left}")
+j:: Send(VimMode == 2 ? "+{Down}" : "{Down}")
+k:: Send(VimMode == 2 ? "+{Up}" : "{Up}")
+l:: Send(VimMode == 2 ? "+{Right}" : "{Right}")
+w:: Send(VimMode == 2 ? "^+{Right}" : "^{Right}")
+b:: Send(VimMode == 2 ? "^+{Left}" : "^{Left}")
+e:: Send(VimMode == 2 ? "^+{Right}+{Left}" : "^{Right}{Left}") ; word end (approximation)
+0:: Send(VimMode == 2 ? "+{Home}" : "{Home}")
++4:: Send(VimMode == 2 ? "+{End}" : "{End}") ; '$' key
+^d:: Send(VimMode == 2 ? "+{PgDn}" : "{PgDn}") ; Page down
+^u:: Send(VimMode == 2 ? "+{PgUp}" : "{PgUp}") ; Page up
+
+; --- Vim Mode Switching ---
+v:: UpdateHUD(VimMode == 1 ? 2 : 1)
+
+; --- Enter Insert from Normal or Visual ---
+i:: {
+    if (VimMode == 2)
+        Send "{Left}"  ; collapse the selection to its start
+    UpdateHUD(3)
+}
+
+; --- Document Navigation (Normal and Visual) ---
+g:: {
+    if (A_PriorHotkey == "g" and A_TimeSincePriorHotkey < DblClickTimeout) {
+        if (VimMode == 2)
+            Send "+^{Home}" ; 'gg' extends selection in Visual mode
+        else
+            Send "^{Home}"  ; 'gg'
+    }
+}
++g:: {
+    if (VimMode == 2)
+        Send "+^{End}" ; 'G' extends selection in Visual mode
+    else
+        Send "^{End}"  ; 'G'
+}
+#HotIf
+
+; --- Escape (Normal, Visual, Insert) ---
+#HotIf (VimMode == 1 || VimMode == 2 || VimMode == 3) && !Suspended
+Esc:: {
+    if (VimMode != 1)
+        UpdateHUD(1)
+    ; Normal mode: swallow Esc; Off mode: the hotkey is inactive
+}
+#HotIf
+
+; --- Normal Vim Mode Commands ---
+#HotIf VimMode == 1 && !Suspended
+; Find Commands
 f:: ExecuteFind(false)
 t:: ExecuteFind(true)
 /:: {
     Send "^f"
     UpdateHUD(0)
 }
-
-; --- Mode Switching ---
-v:: UpdateHUD(Mode == 1 ? 2 : 1)
-
-; --- Exit ---
-i:: UpdateHUD(0)
-Esc:: UpdateHUD(0)
-
-; --- Normal Mode Commands ---
-#HotIf Mode == 1 && !Suspended
-; Document Navigation
-g:: {
-    if (A_PriorHotkey == "g" and A_TimeSincePriorHotkey < DblClickTimeout)
-        Send "^{Home}" ; 'gg'
-}
-+g:: Send(Mode == 2 ? "+^{End}" : "^{End}") ; 'G' extends selection in visual mode
 
 ; Delete Commands
 d:: {
@@ -1137,10 +1419,10 @@ d:: {
 c:: {
     if (A_PriorHotkey == "c" and A_TimeSincePriorHotkey < DblClickTimeout) {
         Send "{Home}+{End}{BackSpace}" ; 'cc'
-        UpdateHUD(0)
+        UpdateHUD(3)
     } else {
         Send "^{Delete}" ; 'cw'
-        UpdateHUD(0)
+        UpdateHUD(3)
     }
 }
 
@@ -1159,33 +1441,43 @@ p:: Send "^v"
 u:: Send "^z"
 ^r:: Send "^y" ; Redo
 x:: Send "{Delete}"
-o:: Send("{End}{Enter}"), UpdateHUD(0)
-+o:: Send("{Home}{Enter}{Up}"), UpdateHUD(0)
-a:: Send("{Right}"), UpdateHUD(0)
-+a:: Send("{End}"), UpdateHUD(0)
+o:: Send("{End}{Enter}"), UpdateHUD(3)
++o:: Send("{Home}{Enter}{Up}"), UpdateHUD(3)
+a:: Send("{Right}"), UpdateHUD(3)
++a:: Send("{End}"), UpdateHUD(3)
 
 ; Command Line
-SC027:: { ; ':' key
+SC027:: return ; ';' is swallowed; use ':' for command mode
++SC027:: { ; ':' key
     ; Turn hotkeys off while the command box is open, so typed letters
     ; (w, q) reach the box instead of firing hotkeys
-    prevMode := Mode
+    targetHwnd := WinActive("A")
+    prevVimMode := VimMode
     UpdateHUD(0)
     Result := InputBox("Command: w (save), q (quit), wq (save & quit)", "Vim Command", "h80 w300")
     if (Result.Result = "OK") {
-        val := StrLower(Result.Value)
-        if (val = "w")
-            Send "^s"
-        if (val = "q")
-            Send "!{F4}"
-        if (val = "wq") {
-            Send "^s"
-            Sleep 100
-            Send "!{F4}"
+        val := Trim(StrLower(Result.Value))
+        if (SubStr(val, 1, 1) == ":")
+            val := Trim(SubStr(val, 2))
+        if (val = "w" || val = "q" || val = "wq") {
+            ; Restore focus to the window that was active before the InputBox
+            if (targetHwnd && WinExist("ahk_id " targetHwnd)) {
+                try WinActivate("ahk_id " targetHwnd)
+                Sleep 100
+            }
+            if (val = "w" || val = "wq")
+                Send "^s"
+            if (val = "q")
+                Send "!{F4}"
+            if (val = "wq") {
+                Sleep 100
+                Send "!{F4}"
+            }
         }
     }
     ; Restore previous mode unless a command already changed it
-    if (Mode == 0 && prevMode != 0)
-        UpdateHUD(prevMode)
+    if (VimMode == 0 && prevVimMode != 0)
+        UpdateHUD(prevVimMode)
 }
 
 ; Window Navigation by Number
@@ -1200,12 +1492,28 @@ SC027:: { ; ':' key
 9:: GoToWindowByIndex(9)
 #HotIf
 
-; --- Visual Mode Commands ---
-#HotIf Mode == 2 && !Suspended
+; --- Visual Vim Mode Commands ---
+#HotIf VimMode == 2 && !Suspended
 d:: Send("{BackSpace}"), UpdateHUD(1)
-c:: Send("{BackSpace}"), UpdateHUD(0)
+c:: Send("{BackSpace}"), UpdateHUD(3)
 y:: Send("^c"), UpdateHUD(1), FlashMessage("YANKED")
 x:: Send("{Delete}"), UpdateHUD(1)
+p:: Send("^v"), UpdateHUD(1)
+
+; Unsupported Visual commands are swallowed so they do not type into the document.
+a:: return
++a:: return
+o:: return
++o:: return
+SC027:: return
++SC027:: return
++SC033:: return   ; '<' (indentation is not supported)
++SC034:: return   ; '>' (indentation is not supported)
++v:: return       ; 'V' (linewise Visual is not supported)
+^v:: return       ; Ctrl+V (blockwise Visual is not supported)
+f:: return
+t:: return
+/:: return
 #HotIf
 
 #HotIf
