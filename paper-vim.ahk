@@ -56,6 +56,9 @@ global Suspended := false             ; Script suspension state (pauses all acti
 global SuspendedState := Map()        ; Stores window state before suspension
 global EmergencyMode := false         ; Set after an unhandled error; freezes layout
 global EmergencyInProgress := false   ; Prevents recursive emergency-layout handling
+global HelpVisible := false           ; Keybind help overlay is open
+global HelpTargetHwnd := 0            ; Window to reactivate after help closes
+global HelpInputHook := ""            ; Catches the key that closes help
 
 ; --- Desktop Management ---
 global CurrentDesktop := 1            ; Currently active virtual desktop number
@@ -141,6 +144,14 @@ WinSetTransColor(DockBackgroundColor, DockGui)
 DockGui.MarginX := DockMarginX
 DockGui.MarginY := DockMarginY
 
+; Keybind help overlay (hidden until F1 is pressed)
+HelpGui := Gui("+AlwaysOnTop -Caption +ToolWindow +Border")
+HelpGui.BackColor := "121212"
+HelpGui.MarginX := 20
+HelpGui.MarginY := 20
+HelpGui.SetFont("s10 cFFFFFF", "Consolas")
+HelpTextCtl := HelpGui.Add("Text", "w1050 -Wrap", "")
+
 ; ==============================================================================
 ; CORE FUNCTIONS
 ; ==============================================================================
@@ -172,6 +183,12 @@ UpdateHUD(NewState) {
         ShowHUDAtTopRight()
         return
     }
+
+    ; The help overlay owns the screen while it is open.
+    if (HelpVisible) {
+        VimGui.Hide()
+        return
+    }
     
     if (VimMode == 0) {
         VimGui.Hide()
@@ -195,7 +212,7 @@ UpdateHUD(NewState) {
 ; @param Duration - How long to show message (default: FlashDuration)
 FlashMessage(Msg, Duration := FlashDuration) {
     global FlashTimer
-    if (VimMode > 0 && !LayoutFrozen()) {
+    if (VimMode > 0 && !LayoutFrozen() && !HelpVisible) {
         VimText.Opt(FlashMsgColor)
         VimText.Value := Msg
         ; Cancel any pending restore so messages don't cut each other short
@@ -210,6 +227,153 @@ FlashMessage(Msg, Duration := FlashDuration) {
 LayoutFrozen() {
     global Suspended, EmergencyMode
     return Suspended || EmergencyMode
+}
+
+; --- Keybind Help -----------------------------------------------------------
+
+; Open the mode-scoped help overlay.
+ShowHelp() {
+    global HelpVisible, HelpGui, HelpTextCtl, HelpTargetHwnd, HelpInputHook
+    global VimMode, VimGui
+
+    if (HelpVisible || VimMode < 1 || VimMode > 3)
+        return
+
+    HelpTargetHwnd := WinActive("A")
+    HelpTextCtl.Value := BuildHelpText(VimMode)
+    HelpVisible := true
+    try VimGui.Hide()
+    try {
+        HelpGui.Show("AutoSize Center")
+        WinActivate("ahk_id " HelpGui.Hwnd)
+    } catch as err {
+        DismissHelp()
+        return
+    }
+
+    ; InputHook sees keys even if another window steals focus. The S option
+    ; suppresses the closing key so it cannot type into the restored app.
+    HelpInputHook := InputHook("L1")
+    HelpInputHook.KeyOpt("{All}", "E S")
+    try {
+        HelpInputHook.Start()
+        HelpInputHook.Wait()
+    } catch as err {
+    }
+    DismissHelp()
+}
+
+; Close the help overlay and return to the Vim mode it was opened from.
+DismissHelp() {
+    global HelpVisible, HelpGui, HelpTargetHwnd, HelpInputHook, VimMode
+
+    if (!HelpVisible)
+        return
+
+    HelpVisible := false
+    if (IsObject(HelpInputHook)) {
+        try HelpInputHook.Stop()
+        HelpInputHook := ""
+    }
+    try HelpGui.Hide()
+    if (HelpTargetHwnd && WinExist("ahk_id " HelpTargetHwnd))
+        try WinActivate("ahk_id " HelpTargetHwnd)
+    UpdateHUD(VimMode)
+}
+
+; Build the keybind text for one Vim mode.
+; @param mode - Vim mode: 1=Normal, 2=Visual, 3=Insert
+BuildHelpText(mode) {
+    modeName := (mode == 1) ? "NORMAL" : (mode == 2) ? "VISUAL" : "INSERT"
+    common := [
+        "COMMON",
+        "  F1                      Show mode-scoped help",
+        "  CapsLock                Toggle Vim mode on/off",
+        "  Ctrl+Q                  Suspend / resume (not in emergency mode)",
+        ""
+    ]
+
+    if (mode == 1) {
+        lines := [
+            "NORMAL MODE",
+            "  v                       Enter Visual",
+            "  i / a / A / o / O       Enter Insert (cursor / append / new line)",
+            "  Esc                     Nothing (stays Normal)",
+            "",
+            "NAVIGATION",
+            "  h j k l                 Left / down / up / right",
+            "  w b e                   Next word / previous word / end of word",
+            "  0 $                     Start / end of line",
+            "  gg G                    Start / end of document",
+            "  Ctrl+D / Ctrl+U         Page down / up",
+            "",
+            "EDITING",
+            "  x                       Delete character",
+            "  dd                      Delete line",
+            "  cc / cw                 Change line / word (then Insert)",
+            "  yy                      Yank line",
+            "  p                       Paste",
+            "  u / Ctrl+R              Undo / redo",
+            "",
+            "FIND",
+            "  f<char> / t<char>       Find / till character forward",
+            "  /                       Application find dialog",
+            "",
+            "COMMAND",
+            "  :                       Open command (Normal only)",
+            "  :w / :q / :wq           Save / close / save and close",
+            "  Semicolon (;)           Swallowed in Normal and Visual",
+            "",
+            "WINDOW MANAGEMENT",
+            "  n / Tab                 Next / previous window",
+            "  1-9                     Jump to window number",
+            "  Ctrl+H / Ctrl+L         Swap with left / right window",
+            "  Ctrl+Shift+1/2/3        Width 25% / 50% / 75%",
+            "  Ctrl+Shift+0            Full width (focus/peek)",
+            "  Ctrl+Shift+C            Center active window",
+            "  Ctrl+Shift+D            Remove active window from stack",
+            "  Ctrl+F                  Toggle overlay mode",
+            "  Ctrl+T                  Toggle taskbar",
+            "  z                       Reflow layout",
+            "",
+            "VIRTUAL DESKTOPS",
+            "  Ctrl+J / Ctrl+K         Previous / next desktop",
+            "  Ctrl+1-5                Jump to desktop 1-5"
+        ]
+    } else if (mode == 2) {
+        lines := [
+            "VISUAL MODE",
+            "  v / Esc                 Return to Normal",
+            "  h j k l                 Extend selection by character",
+            "  w b e                   Extend selection by word",
+            "  0 $                     Extend to line start / end",
+            "  gg / G                  Extend to document start / end",
+            "  Ctrl+D / Ctrl+U         Extend by page",
+            "  d / x                   Delete selection",
+            "  c                       Change selection (delete, then Insert)",
+            "  y                       Yank selection",
+            "  p                       Paste over selection",
+            "  i                       Collapse to selection start, then Insert",
+            "",
+            "Window management keys remain active; see Normal help for details.",
+            "Window-number keys 1-9 are Normal-only."
+        ]
+    } else {
+        lines := [
+            "INSERT MODE",
+            "  Esc                     Return to Normal",
+            "",
+            "Text input is passed through to the application.",
+            "Enter Insert from Normal with i, a, A, o, O, cc, or cw."
+        ]
+    }
+
+    text := "Paper-VIM help - " modeName "  |  press any key to close`n`n"
+    for line in common
+        text .= line "`n"
+    for line in lines
+        text .= line "`n"
+    return text
 }
 
 ; Toggle script suspension state
@@ -1188,15 +1352,23 @@ ToggleTaskbar() {
 ; off-screen or behind each other in an unreachable horizontal row.
 EmergencyLayout() {
     global WindowStack, WorkLeft, WorkTop, WorkWidth, WorkHeight
-    global VimGui, DockGui
+    global VimGui, DockGui, HelpGui, HelpVisible, HelpInputHook
     global EmergencyMargin, EmergencyMinWidth, EmergencyMinHeight
     global EmergencyMaxWidth, EmergencyMaxHeight
 
-    ; Hide the always-on-top HUD and dock so they cannot cover the windows.
+    ; Hide the always-on-top HUD, dock, and help overlay so they cannot cover
+    ; the windows.
     if (IsSet(VimGui))
         try VimGui.Hide()
     if (IsSet(DockGui))
         try DockGui.Hide()
+    if (IsSet(HelpGui))
+        try HelpGui.Hide()
+    if (IsObject(HelpInputHook)) {
+        try HelpInputHook.Stop()
+        HelpInputHook := ""
+    }
+    HelpVisible := false
 
     availableWidth := WorkWidth
     availableHeight := WorkHeight
@@ -1256,7 +1428,12 @@ EmergencyOnError(err, mode) {
 OnExit(CleanupAndExit)
 
 CleanupAndExit(ExitReason, ExitCode) {
-    global EmergencyMode
+    global EmergencyMode, HelpInputHook
+
+    if (IsObject(HelpInputHook)) {
+        try HelpInputHook.Stop()
+        HelpInputHook := ""
+    }
 
     ; Retry the safe layout if the script is exiting because of an error.
     if (EmergencyMode || ExitReason = "Error")
@@ -1269,6 +1446,11 @@ CleanupAndExit(ExitReason, ExitCode) {
     }
     
     try DockGui.Destroy()
+    catch as err {
+        ; Already destroyed
+    }
+
+    try HelpGui.Destroy()
     catch as err {
         ; Already destroyed
     }
@@ -1346,6 +1528,12 @@ catch as err {
 
 ; Toggle Vim mode with CapsLock
 CapsLock:: {
+    ; Any key closes help; CapsLock must not toggle the mode while it is open.
+    if (HelpVisible) {
+        DismissHelp()
+        return
+    }
+
     ; If suspended, resume by calling ToggleSuspend and enter Normal mode
     if (Suspended) {
         if (EmergencyMode)
@@ -1358,7 +1546,7 @@ CapsLock:: {
     }
 }
 
-#HotIf (VimMode == 1 || VimMode == 2) && !Suspended
+#HotIf (VimMode == 1 || VimMode == 2) && !Suspended && !HelpVisible
 ; --- Virtual Desktops ---
 ^j:: {
     Send("^#{Left}")  ; Ctrl+Win+Left
@@ -1387,12 +1575,12 @@ CapsLock:: {
 ^5:: GoToDesktop(5)
 #HotIf
 
-#HotIf VimMode > 0
+#HotIf VimMode > 0 && !HelpVisible
 ; --- Layout Control ---
 ^q:: ToggleSuspend()  ; Toggle script suspension
 #HotIf
 
-#HotIf (VimMode == 1 || VimMode == 2) && !Suspended
+#HotIf (VimMode == 1 || VimMode == 2) && !Suspended && !HelpVisible
 ^f:: {
     global OverlayMode := !OverlayMode
     FlashMessage(OverlayMode ? "OVERLAY MODE" : "TILING MODE")
@@ -1503,7 +1691,7 @@ g:: {
 #HotIf
 
 ; --- Escape (Normal, Visual, Insert) ---
-#HotIf (VimMode == 1 || VimMode == 2 || VimMode == 3) && !Suspended
+#HotIf (VimMode == 1 || VimMode == 2 || VimMode == 3) && !Suspended && !HelpVisible
 Esc:: {
     if (VimMode != 1)
         UpdateHUD(1)
@@ -1512,7 +1700,7 @@ Esc:: {
 #HotIf
 
 ; --- Normal Vim Mode Commands ---
-#HotIf VimMode == 1 && !Suspended
+#HotIf VimMode == 1 && !Suspended && !HelpVisible
 ; Find Commands
 f:: ExecuteFind(false)
 t:: ExecuteFind(true)
@@ -1605,7 +1793,7 @@ SC027:: return ; ';' is swallowed; use ':' for command mode
 #HotIf
 
 ; --- Visual Vim Mode Commands ---
-#HotIf VimMode == 2 && !Suspended
+#HotIf VimMode == 2 && !Suspended && !HelpVisible
 d:: Send("{BackSpace}"), UpdateHUD(1)
 c:: Send("{BackSpace}"), UpdateHUD(3)
 y:: Send("^c"), UpdateHUD(1), FlashMessage("YANKED")
@@ -1626,6 +1814,11 @@ SC027:: return
 f:: return
 t:: return
 /:: return
+#HotIf
+
+; --- Keybind Help ---
+#HotIf (VimMode == 1 || VimMode == 2 || VimMode == 3) && !Suspended && !EmergencyMode && !HelpVisible
+F1:: ShowHelp()
 #HotIf
 
 #HotIf

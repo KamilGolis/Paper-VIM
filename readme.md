@@ -46,6 +46,7 @@ This script was born out of necessity. Unable to use Linux with my preferred set
   - When **suspended**: Resume script and enter Normal mode
 - When **OFF**: Your keyboard works normally
 - When **ON**: Vim keybindings are active; the HUD shows NORMAL, VISUAL, or INSERT
+- **F1**: Show keybind help for the current mode; any key closes it
 
 ### Window Navigation
 - **n**: Next window in stack
@@ -194,8 +195,14 @@ after such a crash.
 - **v**: Switch between Normal (green) and Visual (red) mode
 - **i**: Enter Insert (blue) at the cursor
 - **Esc**: Return to Normal from Insert or Visual; does nothing in Normal
-- **Insert**: Keys type normally; only Esc and CapsLock are intercepted
+- **F1**: Show mode-scoped keybind help; any key closes it
+- **Insert**: Keys type normally; Esc returns to Normal, CapsLock turns Vim off, and F1 opens help
 - The Vim mode is global, not per window
+
+### Help Overlay
+Press **F1** in Normal, Visual, or Insert mode to open a keybind list scoped to
+that mode. The overlay also shows common keys. Press any key to close it and
+return to the mode it was opened from. F1 is not bound when Vim mode is off.
 
 ### Basic Navigation (Normal Mode)
 | Key | Action |
@@ -353,7 +360,7 @@ are application shortcuts, not Vim commands: in a browser, `:w` opens
 ### Vim Mode
 - CapsLock toggles a global `VimMode` variable (0=off, 1=normal, 2=visual, 3=insert)
 - Vim command hotkeys use `#HotIf VimMode == 1 || VimMode == 2`
-- Insert mode only intercepts Esc and CapsLock; all other keys pass through
+- Insert mode intercepts Esc, CapsLock, and F1; all other keys pass through
 - Visual mode adds Shift to navigation keys for text selection
 - Layout hotkeys are disabled in Insert mode
 
