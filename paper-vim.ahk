@@ -733,7 +733,7 @@ ReflowStack(centerActive := false) {
             if (!WinExist(WindowStack[idx])) {
                 if (WindowStack[idx] == activeHwnd)
                     activeRemoved := true
-                WindowWidths.Delete(WindowStack[idx])
+                ForgetWindowWidth(WindowStack[idx])
                 WindowStack.RemoveAt(idx)
             }
         }
@@ -741,7 +741,7 @@ ReflowStack(centerActive := false) {
             ; Error checking window, remove it
             if (WindowStack[idx] == activeHwnd)
                 activeRemoved := true
-            WindowWidths.Delete(WindowStack[idx])
+            ForgetWindowWidth(WindowStack[idx])
             WindowStack.RemoveAt(idx)
         }
     }
@@ -931,6 +931,15 @@ GetWindowWidthRatio(hwnd) {
     return FullWidthRatio
 }
 
+; Remove a remembered width if one exists. Map.Delete throws when the key is
+; absent, so check first.
+; @param hwnd - Window handle
+ForgetWindowWidth(hwnd) {
+    global WindowWidths
+    if (WindowWidths.Has(hwnd))
+        WindowWidths.Delete(hwnd)
+}
+
 ; Convert a width ratio into pixels for the current work area.
 ; Gaps are subtracted from the proportion, so four 25% windows or two 50%
 ; windows tile the screen exactly instead of overflowing by the gaps.
@@ -1034,6 +1043,7 @@ GoToWindowByIndex(index) {
 
 ; Add all existing windows to the stack on startup or desktop switch
 InitializeExistingWindows() {
+    global WindowWidths, FullWidthRatio
     ; Don't initialize when suspended
     if (Suspended)
         return
@@ -1051,8 +1061,13 @@ InitializeExistingWindows() {
                 for item in WindowStack
                     if (item == hwnd)
                         alreadyExists := true
-                if (!alreadyExists)
+                if (!alreadyExists) {
                     WindowStack.Push(hwnd)
+                    ; Existing windows are adopted without going through
+                    ; ManageNewWindow, so seed their default width here.
+                    if (!WindowWidths.Has(hwnd))
+                        WindowWidths[hwnd] := FullWidthRatio
+                }
             }
         }
         catch as err
@@ -1297,7 +1312,7 @@ CapsLock:: {
     
     for i, hwnd in WindowStack {
         if (hwnd == activeHwnd) {
-            WindowWidths.Delete(hwnd)
+            ForgetWindowWidth(hwnd)
             WindowStack.RemoveAt(i)
             FlashMessage("WINDOW REMOVED")
             break
