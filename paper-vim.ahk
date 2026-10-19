@@ -30,6 +30,11 @@ global WindowWidths := Map()          ; Per-window width ratio (hwnd -> 0.25..1.
 global ViewOffset := 0                ; Horizontal scroll offset of the window row (px)
 global Gap := 8                       ; Gap between windows and screen edges
 global BarHeight := 60                ; Space reserved at the top for the HUD and dock
+global EmergencyMargin := 40          ; Margin for the post-error reachable layout
+global EmergencyMinWidth := 400       ; Minimum width of the post-error layout
+global EmergencyMinHeight := 300      ; Minimum height of the post-error layout
+global EmergencyMaxWidth := 1200      ; Maximum width of the post-error layout
+global EmergencyMaxHeight := 800      ; Maximum height of the post-error layout
 global TaskbarMode := "auto"          ; auto, left, top, right, bottom, or none
 global TaskbarSize := 0               ; Fixed taskbar size in px (0 = 48); used with a fixed mode
 global OverlayMode := false           ; Toggle between tiling and overlay (fullscreen) mode
@@ -49,6 +54,8 @@ global WorkHeight := A_ScreenHeight
 global VimMode := 0                   ; 0=Off, 1=Normal, 2=Visual, 3=Insert
 global Suspended := false             ; Script suspension state (pauses all actions)
 global SuspendedState := Map()        ; Stores window state before suspension
+global EmergencyMode := false         ; Set after an unhandled error; freezes layout
+global EmergencyInProgress := false   ; Prevents recursive emergency-layout handling
 
 ; --- Desktop Management ---
 global CurrentDesktop := 1            ; Currently active virtual desktop number
@@ -112,6 +119,9 @@ global HSHELL_WINDOWCREATED := 1      ; Window created event
 global HSHELL_WINDOWDESTROYED := 2    ; Window destroyed event
 global HSHELL_WINDOWACTIVATED := 4    ; Window activated event
 global HSHELL_FLASH := 32772          ; Window flash event (HSHELL_WINDOWACTIVATED | HSHELL_HIGHBIT)
+
+; Install the emergency guard before any layout code runs.
+OnError(EmergencyOnError)
 
 ; ==============================================================================
 ; GUI INITIALIZATION
@@ -185,7 +195,7 @@ UpdateHUD(NewState) {
 ; @param Duration - How long to show message (default: FlashDuration)
 FlashMessage(Msg, Duration := FlashDuration) {
     global FlashTimer
-    if (VimMode > 0 && !Suspended) {
+    if (VimMode > 0 && !LayoutFrozen()) {
         VimText.Opt(FlashMsgColor)
         VimText.Value := Msg
         ; Cancel any pending restore so messages don't cut each other short
@@ -196,11 +206,21 @@ FlashMessage(Msg, Duration := FlashDuration) {
     }
 }
 
+; True when window layout actions must not run.
+LayoutFrozen() {
+    global Suspended, EmergencyMode
+    return Suspended || EmergencyMode
+}
+
 ; Toggle script suspension state
 ; When suspended, all window management actions are paused
 ; Resume by pressing Ctrl+Q again or CapsLock to enter Vim mode
 ToggleSuspend() {
-    global Suspended, SuspendedState, OverlayMode, WindowStack
+    global Suspended, SuspendedState, OverlayMode, WindowStack, EmergencyMode
+
+    ; Emergency mode is terminal for this session; restart to resume.
+    if (EmergencyMode)
+        return
     
     if (!Suspended) {
         ; === SUSPENDING ===
@@ -571,8 +591,8 @@ OnMessage(DllCall("RegisterWindowMessage", "Str", "SHELLHOOK"), ShellMessage)
 ; @param wParam - Message type (1=created, 2=destroyed, 4/32772=activated)
 ; @param lParam - Window handle
 ShellMessage(wParam, lParam, *) {
-    ; Ignore all window events when suspended
-    if (Suspended)
+    ; Ignore all window events when layout is frozen
+    if (LayoutFrozen())
         return
     
     if (wParam = HSHELL_WINDOWCREATED)
@@ -604,7 +624,7 @@ DeferredReflow() {
 ; @param hwnd - Window handle to potentially manage
 ManageNewWindow(hwnd) {
     global WindowWidths
-    if (!hwnd)
+    if (!hwnd || LayoutFrozen())
         return
     
     if (!WinExist(hwnd))
@@ -703,8 +723,8 @@ ShouldManageWindow(hwnd) {
 ReflowStack(centerActive := false) {
     global WindowWidths, ViewOffset
 
-    ; Don't reflow when suspended
-    if (Suspended)
+    ; Don't reflow when layout is frozen
+    if (LayoutFrozen())
         return
 
     ; Taskbar position/size can change at any time (dock moved, auto-hide,
@@ -869,8 +889,8 @@ ReflowStack(centerActive := false) {
 GoToDesktop(Target) {
     global CurrentDesktop, InitializedDesktops
     
-    ; Don't switch desktops when suspended
-    if (Suspended)
+    ; Don't switch desktops when layout is frozen
+    if (LayoutFrozen())
         return
     
     if (Target < 1 || Target > 10) {
@@ -990,8 +1010,8 @@ CenterActiveWindow() {
 ; Cycle through window stack
 ; @param direction - Direction to cycle (1=next, -1=previous)
 CycleStack(direction) {
-    ; Don't cycle when suspended
-    if (Suspended)
+    ; Don't cycle when layout is frozen
+    if (LayoutFrozen())
         return
     
     if (WindowStack.Length <= 1)
@@ -1021,8 +1041,8 @@ CycleStack(direction) {
 ; Switch to window by index in stack
 ; @param index - Window index (1-based)
 GoToWindowByIndex(index) {
-    ; Don't switch windows when suspended
-    if (Suspended)
+    ; Don't switch windows when layout is frozen
+    if (LayoutFrozen())
         return
     
     if (WindowStack.Length == 0 || index < 1 || index > WindowStack.Length) {
@@ -1044,8 +1064,8 @@ GoToWindowByIndex(index) {
 ; Add all existing windows to the stack on startup or desktop switch
 InitializeExistingWindows() {
     global WindowWidths, FullWidthRatio
-    ; Don't initialize when suspended
-    if (Suspended)
+    ; Don't initialize when layout is frozen
+    if (LayoutFrozen())
         return
     
     windowList := WinGetList()
@@ -1112,8 +1132,8 @@ ExecuteFind(isTill) {
 
 ; Toggle Windows taskbar visibility
 ToggleTaskbar() {
-    ; Don't toggle taskbar when suspended
-    if (Suspended)
+    ; Don't toggle taskbar when layout is frozen
+    if (LayoutFrozen())
         return
     
     global TaskbarHidden
@@ -1160,6 +1180,75 @@ ToggleTaskbar() {
 }
 
 ; ==============================================================================
+; ERROR RECOVERY
+; ==============================================================================
+
+; Move every managed window to one reachable, overlapping rectangle.
+; This runs after an unhandled error so a broken layout cannot strand windows
+; off-screen or behind each other in an unreachable horizontal row.
+EmergencyLayout() {
+    global WindowStack, WorkLeft, WorkTop, WorkWidth, WorkHeight
+    global VimGui, DockGui
+    global EmergencyMargin, EmergencyMinWidth, EmergencyMinHeight
+    global EmergencyMaxWidth, EmergencyMaxHeight
+
+    ; Hide the always-on-top HUD and dock so they cannot cover the windows.
+    if (IsSet(VimGui))
+        try VimGui.Hide()
+    if (IsSet(DockGui))
+        try DockGui.Hide()
+
+    availableWidth := WorkWidth
+    availableHeight := WorkHeight
+    if (availableWidth <= 0)
+        availableWidth := A_ScreenWidth
+    if (availableHeight <= 0)
+        availableHeight := A_ScreenHeight
+
+    safeWidth := Min(EmergencyMaxWidth, Max(EmergencyMinWidth, availableWidth - 2 * EmergencyMargin))
+    safeHeight := Min(EmergencyMaxHeight, Max(EmergencyMinHeight, availableHeight - 2 * EmergencyMargin))
+    safeX := WorkLeft + EmergencyMargin
+    safeY := WorkTop + EmergencyMargin
+
+    try {
+        for hwnd in WindowStack {
+            try {
+                if (!WinExist("ahk_id " hwnd))
+                    continue
+                if (WinGetMinMax("ahk_id " hwnd) != 0)
+                    WinRestore("ahk_id " hwnd)
+                WinMove(safeX, safeY, safeWidth, safeHeight, "ahk_id " hwnd)
+            }
+        }
+    } catch as err {
+        ; A broken stack must not make the error handler throw.
+    }
+}
+
+; Last-resort handler for unhandled errors. Move the windows before AHK shows
+; its normal error dialog or exits.
+EmergencyOnError(err, mode) {
+    global EmergencyMode, EmergencyInProgress, Suspended
+
+    if (EmergencyInProgress)
+        return false
+
+    EmergencyInProgress := true
+    EmergencyMode := true
+    Suspended := true   ; stop reflows and shell-hook layout changes
+    Critical "Off"      ; an error may have left Critical On
+    try {
+        EmergencyLayout()
+    } catch as layoutErr {
+        ; Keep EmergencyMode set; a later error can retry the layout.
+    }
+    EmergencyInProgress := false
+
+    ; Let AutoHotkey show its normal error dialog after the windows are safe.
+    return false
+}
+
+; ==============================================================================
 ; CLEANUP
 ; ==============================================================================
 
@@ -1167,6 +1256,12 @@ ToggleTaskbar() {
 OnExit(CleanupAndExit)
 
 CleanupAndExit(ExitReason, ExitCode) {
+    global EmergencyMode
+
+    ; Retry the safe layout if the script is exiting because of an error.
+    if (EmergencyMode || ExitReason = "Error")
+        try EmergencyLayout()
+
     ; Hide GUIs before exit
     try VimGui.Destroy()
     catch as err {
@@ -1253,6 +1348,8 @@ catch as err {
 CapsLock:: {
     ; If suspended, resume by calling ToggleSuspend and enter Normal mode
     if (Suspended) {
+        if (EmergencyMode)
+            return       ; emergency mode is terminal; restart the script
         ToggleSuspend()  ; This will restore window positions
         UpdateHUD(1)     ; Enter Normal mode
     } else {

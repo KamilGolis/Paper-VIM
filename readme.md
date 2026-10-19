@@ -172,6 +172,19 @@ When you resume the script:
 - **Presentations**: Quickly disable window management
 - **Quick break**: Pause without losing your window arrangement
 
+### Emergency Layout on Error
+If the script hits an unhandled error, it moves every managed window to the
+same reachable rectangle near the top-left of the work area (up to 1200x800
+px; controlled by `EmergencyMargin`, `EmergencyMinWidth`/`Height`, and
+`EmergencyMaxWidth`/`Height`), hides the HUD and dock, and freezes reflow. It
+then shows the normal AutoHotkey error dialog. This keeps windows reachable
+even if the script stops. Emergency mode is terminal: CapsLock and Ctrl+Q do
+not resume it. Restart the script to restore tiling.
+
+This guard covers unhandled AutoHotkey errors and error exits. A forced
+process kill or native crash cannot run in-process code; restart the script
+after such a crash.
+
 ---
 
 ## ⌨️ Vim Text Navigation & Editing
