@@ -1,6 +1,6 @@
 ; ==============================================================================
 ; Paper-VIM: Vim Keybindings + PaperWM Window Manager
-; Version: 1.3.2
+; Version: 1.4.0
 ; Author: KamilGolis
 ; Description: Combines vim-style navigation with PaperWM tiling window manager
 ; License: MIT
@@ -51,13 +51,36 @@ global WorkWidth := A_ScreenWidth
 global WorkHeight := A_ScreenHeight
 
 ; --- Vim Mode State ---
-global VimMode := 0                   ; 0=Off, 1=Normal, 2=Visual, 3=Insert
+global VimMode := 0                   ; 0=Off, 1=Normal, 2=Visual, 3=Insert, 4=Targeting
 global Suspended := false             ; Script suspension state (pauses all actions)
 global SuspendedState := Map()        ; Stores window state before suspension
 global EmergencyMode := false         ; Set after an unhandled error; freezes layout
 global EmergencyInProgress := false   ; Prevents recursive emergency-layout handling
 global HelpVisible := false           ; Keybind help overlay is open
 global HelpTargetHwnd := 0            ; Window to reactivate after help closes
+
+; --- Targeting Mode ---
+global TargetActive := false          ; Targeting grid and input hook are active
+global TargetHelpPaused := false      ; Targeting is hidden while help is open
+global TargetHook := ""               ; InputHook that owns the keyboard in Targeting
+global TargetMonL := 0                ; Target monitor bounds in screen coordinates
+global TargetMonT := 0
+global TargetMonR := 0
+global TargetMonB := 0
+global TargetL := 0                   ; Current active cell bounds
+global TargetT := 0
+global TargetR := 0
+global TargetB := 0
+global TargetHistory := []            ; Previous active cells, for Backspace
+global TargetPendingAxis := ""        ; First axis key typed: "x" or "y"
+global TargetPendingValue := 0        ; 0 = left/top, 1 = right/bottom
+global TargetDimGui := ""             ; Full-monitor dim layer
+global TargetAncestorGui := ""        ; Faint outlines of previous cells
+global TargetGridGui := ""            ; Current 2x2 grid labels
+global TargetCellCtrls := []          ; Four cell border controls
+global TargetCellLabels := []         ; Four axis label controls
+global TargetAncestorCtrls := []      ; Fixed pool of previous-outline controls
+global TargetMinCellSize := 8         ; Stop splitting below this cell size (px)
 
 ; --- Desktop Management ---
 global CurrentDesktop := 1            ; Currently active virtual desktop number
@@ -70,6 +93,7 @@ global DockBackgroundColor := "1a1a1a"    ; Dock background (darker gray)
 global NormalModeColor := "c00FF00"       ; Normal mode text color (green)
 global VisualModeColor := "cFF0000"       ; Visual mode text color (red)
 global InsertModeColor := "c00BFFF"       ; Insert mode text color (blue)
+global TargetingModeColor := "cFF00FF"    ; Targeting mode text color (magenta)
 global FlashMsgColor := "cFFFF00"         ; Flash message color (yellow)
 global SuspendedModeColor := "cFF8800"    ; Suspended mode text color (orange)
 global ActiveIndicatorColor := "00FF00"   ; Dock active window underline (green)
@@ -180,6 +204,39 @@ loop 4 {
     FocusBars.Push(FocusBorderBar)
 }
 
+; Targeting overlays. The dim layer darkens the monitor; the two transparent
+; layers draw faint previous outlines and the current grid without stealing
+; the mouse or keyboard focus.
+TargetDimGui := Gui("+AlwaysOnTop -Caption +ToolWindow +E0x20 +E0x80000 +E0x08000000 -DPIScale")
+TargetDimGui.BackColor := "000000"
+TargetDimGui.Show("NA x0 y0 w1 h1 Hide")
+WinSetTransparent(70, TargetDimGui)
+
+TargetAncestorGui := Gui("+AlwaysOnTop -Caption +ToolWindow +E0x20 +E0x80000 +E0x08000000 -DPIScale")
+TargetAncestorGui.BackColor := "010203"
+TargetAncestorGui.Show("NA x0 y0 w1 h1 Hide")
+WinSetTransColor("010203", TargetAncestorGui)
+WinSetTransparent(100, TargetAncestorGui)
+loop 12 {
+    TargetAncestorCtrl := TargetAncestorGui.Add("Text", "x0 y0 w1 h1 +Border +BackgroundTrans", "")
+    TargetAncestorCtrl.Visible := false
+    TargetAncestorCtrls.Push(TargetAncestorCtrl)
+}
+
+TargetGridGui := Gui("+AlwaysOnTop -Caption +ToolWindow +E0x20 +E0x80000 +E0x08000000 -DPIScale")
+TargetGridGui.BackColor := "010203"
+TargetGridGui.SetFont("s20 cFFFFFF w700", "Consolas")
+TargetGridGui.Show("NA x0 y0 w1 h1 Hide")
+WinSetTransColor("010203", TargetGridGui)
+loop 4 {
+    TargetCellCtrl := TargetGridGui.Add("Text", "x0 y0 w1 h1 +Border +BackgroundTrans", "")
+    TargetCellCtrls.Push(TargetCellCtrl)
+}
+Loop 4 {
+    TargetCellLabel := TargetGridGui.Add("Text", "x0 y0 w1 h1 Center +BackgroundTrans", "")
+    TargetCellLabels.Push(TargetCellLabel)
+}
+
 ; ==============================================================================
 ; CORE FUNCTIONS
 ; ==============================================================================
@@ -188,16 +245,23 @@ loop 4 {
 ; text, so measure the real window width instead of using a fixed width.
 ShowHUDAtTopRight() {
     global VimGui, WorkLeft, WorkWidth, WorkTop, HUDPosY, HUDMarginRight
+    global VimMode, TargetActive, TargetMonT, TargetMonR
 
     VimGui.Show("Hide")
     WinGetPos(&hx, &hy, &hudWidth, &hudHeight, VimGui.Hwnd)
-    hudX := WorkLeft + WorkWidth - hudWidth - HUDMarginRight
-    hudY := WorkTop + HUDPosY
+    if (VimMode == 4 && TargetActive) {
+        ; Keep the mode indicator on the monitor that owns the grid.
+        hudX := TargetMonR - hudWidth - HUDMarginRight
+        hudY := TargetMonT + HUDPosY
+    } else {
+        hudX := WorkLeft + WorkWidth - hudWidth - HUDMarginRight
+        hudY := WorkTop + HUDPosY
+    }
     VimGui.Show("x" hudX " y" hudY " NoActivate")
 }
 
 ; Update HUD display based on current Vim mode
-; @param NewState - Vim mode value: 0=Off, 1=Normal, 2=Visual, 3=Insert
+; @param NewState - Vim mode value: 0=Off, 1=Normal, 2=Visual, 3=Insert, 4=Targeting
 UpdateHUD(NewState) {
     global VimMode := NewState
 
@@ -233,6 +297,10 @@ UpdateHUD(NewState) {
         VimText.Opt(InsertModeColor)
         VimText.Value := "VIM: INSERT"
         ShowHUDAtTopRight()
+    } else if (VimMode == 4) {
+        VimText.Opt(TargetingModeColor)
+        VimText.Value := "VIM: TARGET"
+        ShowHUDAtTopRight()
     }
 }
 
@@ -264,6 +332,8 @@ LayoutFrozen() {
 ToggleHelp() {
     if (HelpVisible)
         DismissHelp()
+    else if (VimMode == 4 && TargetActive)
+        PauseTargetingForHelp()
     else
         ShowHelp()
 }
@@ -273,7 +343,7 @@ ShowHelp() {
     global HelpVisible, HelpGui, HelpLeftCtl, HelpRightCtl, HelpTargetHwnd
     global VimMode, VimGui
 
-    if (HelpVisible || VimMode < 1 || VimMode > 3)
+    if (HelpVisible || VimMode < 1 || VimMode > 4)
         return
 
     HelpTargetHwnd := WinActive("A")
@@ -294,6 +364,7 @@ ShowHelp() {
 ; Close the help overlay and return to the Vim mode it was opened from.
 DismissHelp() {
     global HelpVisible, HelpGui, HelpTargetHwnd, VimMode
+    global TargetHelpPaused
 
     if (!HelpVisible)
         return
@@ -302,17 +373,25 @@ DismissHelp() {
     try HelpGui.Hide()
     if (HelpTargetHwnd && WinExist("ahk_id " HelpTargetHwnd))
         try WinActivate("ahk_id " HelpTargetHwnd)
+
+    ; Targeting was only hidden while help was open; put its grid back.
+    if (VimMode == 4 && TargetHelpPaused) {
+        ResumeTargetingAfterHelp()
+        return
+    }
+
     UpdateHUD(VimMode)
 }
 
 ; Build the combined keybind reference.
-; @param currentMode - Vim mode to mark: 1=Normal, 2=Visual, 3=Insert
+; @param currentMode - Vim mode to mark: 1=Normal, 2=Visual, 3=Insert, 4=Targeting
 ; @return Array: [left column text, right column text]
 BuildHelpText(currentMode) {
-    modeName := (currentMode == 1) ? "NORMAL" : (currentMode == 2) ? "VISUAL" : "INSERT"
+    modeName := (currentMode == 1) ? "NORMAL" : (currentMode == 2) ? "VISUAL" : (currentMode == 3) ? "INSERT" : "TARGET"
     normalTitle := "NORMAL MODE" . (currentMode == 1 ? "  << current" : "")
     visualTitle := "VISUAL MODE" . (currentMode == 2 ? "  << current" : "")
     insertTitle := "INSERT MODE" . (currentMode == 3 ? "  << current" : "")
+    targetTitle := "TARGETING MODE" . (currentMode == 4 ? "  << current" : "")
 
     leftLines := [
         "Paper-VIM keybinds  |  current mode: " modeName,
@@ -324,6 +403,7 @@ BuildHelpText(currentMode) {
         "",
         normalTitle,
         "  v                       Enter Visual",
+        "  m                       Enter Targeting (mouse grid)",
         "  i / a / A / o / O       Enter Insert (cursor / append / new line)",
         "  Esc                     Nothing (stays Normal)",
         "",
@@ -337,7 +417,7 @@ BuildHelpText(currentMode) {
         "EDITING",
         "  x                       Delete character",
         "  dd                      Delete line",
-        "  cc / cw                 Change line / word (then Insert)",
+        "  c                       Change word (then Insert)",
         "  yy                      Yank line",
         "  p                       Paste",
         "  u / Ctrl+R              Undo / redo",
@@ -369,6 +449,14 @@ BuildHelpText(currentMode) {
         "  Ctrl+J / Ctrl+K         Previous / next desktop",
         "  Ctrl+1-5                Jump to desktop 1-5",
         "",
+        targetTitle,
+        "  m                       Enter Targeting (from Normal)",
+        "  h / l                   Choose left / right cell",
+        "  k / j                   Choose up / down cell",
+        "  one x key + one y key   Move pointer; repeat to refine",
+        "  Backspace               Undo one grid level",
+        "  Esc                     Exit to Normal",
+        "",
         visualTitle,
         "  v / Esc                 Return to Normal",
         "  h j k l                 Extend selection by character",
@@ -389,7 +477,7 @@ BuildHelpText(currentMode) {
         "  Esc                     Return to Normal",
         "",
         "Text input is passed through to the application.",
-        "Enter Insert from Normal with i, a, A, o, O, cc, or cw."
+        "Enter Insert from Normal with i, a, A, o, O, or c."
     ]
 
     leftText := ""
@@ -399,6 +487,305 @@ BuildHelpText(currentMode) {
     for line in rightLines
         rightText .= line "`n"
     return [leftText, rightText]
+}
+
+
+; --- Targeting Mode ---------------------------------------------------------
+
+; Find the full bounds of the monitor containing a screen point.
+; @return Array [left, top, right, bottom]
+GetMonitorBoundsAt(x, y) {
+    Loop MonitorGetCount() {
+        MonitorGet(A_Index, &left, &top, &right, &bottom)
+        if (x >= left && x < right && y >= top && y < bottom)
+            return [left, top, right, bottom]
+    }
+
+    MonitorGet(MonitorGetPrimary(), &left, &top, &right, &bottom)
+    return [left, top, right, bottom]
+}
+
+; Enter Targeting from Normal mode. The grid covers the monitor under the
+; pointer, including the taskbar, so every screen point is reachable.
+EnterTargeting() {
+    global VimMode, TargetActive, TargetHelpPaused, TargetHistory
+    global TargetMonL, TargetMonT, TargetMonR, TargetMonB
+    global TargetL, TargetT, TargetR, TargetB
+    global TargetPendingAxis, TargetPendingValue
+
+    if (VimMode != 1 || TargetActive)
+        return
+
+    MouseGetPos(&mouseX, &mouseY)
+    bounds := GetMonitorBoundsAt(mouseX, mouseY)
+
+    TargetMonL := bounds[1]
+    TargetMonT := bounds[2]
+    TargetMonR := bounds[3]
+    TargetMonB := bounds[4]
+    TargetL := TargetMonL
+    TargetT := TargetMonT
+    TargetR := TargetMonR
+    TargetB := TargetMonB
+    TargetHistory := []
+    TargetPendingAxis := ""
+    TargetPendingValue := 0
+    TargetHelpPaused := false
+    TargetActive := true
+
+    ShowTargetOverlay()
+    StartTargetHook()
+    UpdateHUD(4)
+    RaiseOverlays()
+}
+
+; Stop the Targeting input hook.
+StopTargetHook() {
+    global TargetHook
+    if (TargetHook) {
+        try TargetHook.Stop()
+        TargetHook := ""
+    }
+}
+
+; Stop Targeting and leave Vim mode unchanged.
+StopTargeting() {
+    global TargetActive, TargetHelpPaused
+    StopTargetHook()
+    HideTargetOverlay()
+    TargetActive := false
+    TargetHelpPaused := false
+}
+
+; Leave Targeting and enter a Vim mode.
+ExitTargeting(returnMode := 1) {
+    StopTargeting()
+    UpdateHUD(returnMode)
+}
+
+; Capture every key while Targeting is active. The InputHook blocks keys from
+; reaching the active application, including keys that are not grid commands.
+StartTargetHook() {
+    global TargetHook
+    if (TargetHook) {
+        try TargetHook.Stop()
+    }
+
+    TargetHook := InputHook("L0")
+    TargetHook.KeyOpt("{All}", "N S I")
+    TargetHook.OnKeyDown := TargetKeyDown
+    TargetHook.Start()
+}
+
+; Handle one key from the Targeting InputHook.
+TargetKeyDown(ih, vk, sc) {
+    global VimMode, TargetActive
+    if (VimMode != 4 || !TargetActive)
+        return
+
+    switch vk {
+        case 0x1B: ExitTargeting(1)          ; Esc
+        case 0x08: UndoTargetLevel()          ; Backspace
+        case 0x70: PauseTargetingForHelp()    ; F1
+        case 0x48: HandleTargetAxis("x", 0)   ; h
+        case 0x4C: HandleTargetAxis("x", 1)   ; l
+        case 0x4B: HandleTargetAxis("y", 0)   ; k
+        case 0x4A: HandleTargetAxis("y", 1)   ; j
+    }
+}
+
+; Accept one axis key. Two keys from different axes complete a step; pressing
+; the same axis again changes that axis without moving.
+HandleTargetAxis(axis, value) {
+    global TargetPendingAxis, TargetPendingValue
+
+    if (TargetPendingAxis == "") {
+        TargetPendingAxis := axis
+        TargetPendingValue := value
+        return
+    }
+
+    if (axis == TargetPendingAxis) {
+        TargetPendingValue := value
+        return
+    }
+
+    x := (axis == "x") ? value : TargetPendingValue
+    y := (axis == "y") ? value : TargetPendingValue
+    TargetPendingAxis := ""
+    ApplyTargetCell(x, y)
+}
+
+; Move to the center of one of the four current cells and make it the new
+; active cell. The cell is split into another 2x2 grid on the next step.
+ApplyTargetCell(x, y) {
+    global TargetL, TargetT, TargetR, TargetB, TargetHistory, TargetMinCellSize
+
+    width := TargetR - TargetL
+    height := TargetB - TargetT
+    midX := TargetL + Floor(width / 2)
+    midY := TargetT + Floor(height / 2)
+
+    newL := x ? midX : TargetL
+    newR := x ? TargetR : midX
+    newT := y ? midY : TargetT
+    newB := y ? TargetB : midY
+
+    if ((newR - newL) < TargetMinCellSize || (newB - newT) < TargetMinCellSize) {
+        FlashMessage("TARGET LIMIT")
+        return
+    }
+
+    TargetHistory.Push(Map("l", TargetL, "t", TargetT, "r", TargetR, "b", TargetB))
+    TargetL := newL
+    TargetT := newT
+    TargetR := newR
+    TargetB := newB
+
+    MouseMove(Round((TargetL + TargetR) / 2), Round((TargetT + TargetB) / 2), 0)
+    DrawTargetGrid()
+}
+
+; Backspace: restore the previous active cell and move back to its center.
+UndoTargetLevel() {
+    global TargetL, TargetT, TargetR, TargetB, TargetHistory, TargetPendingAxis
+
+    ; Backspace also cancels a half-finished axis choice.
+    if (TargetPendingAxis != "") {
+        TargetPendingAxis := ""
+        return
+    }
+
+    if (TargetHistory.Length == 0) {
+        FlashMessage("NO TARGET TO UNDO")
+        return
+    }
+
+    previous := TargetHistory.Pop()
+    TargetL := previous["l"]
+    TargetT := previous["t"]
+    TargetR := previous["r"]
+    TargetB := previous["b"]
+    TargetPendingAxis := ""
+
+    MouseMove(Round((TargetL + TargetR) / 2), Round((TargetT + TargetB) / 2), 0)
+    DrawTargetGrid()
+}
+
+; Redraw the current 2x2 grid and the faint outlines of previous cells.
+DrawTargetGrid() {
+    global TargetMonL, TargetMonT, TargetMonR, TargetMonB
+    global TargetL, TargetT, TargetR, TargetB, TargetHistory
+    global TargetCellCtrls, TargetCellLabels, TargetAncestorCtrls
+
+    width := TargetR - TargetL
+    height := TargetB - TargetT
+    midX := TargetL + Floor(width / 2)
+    midY := TargetT + Floor(height / 2)
+
+    cells := [
+        [TargetL, TargetT, midX, midY],
+        [midX, TargetT, TargetR, midY],
+        [TargetL, midY, midX, TargetB],
+        [midX, midY, TargetR, TargetB]
+    ]
+
+    cellX := TargetL - TargetMonL
+    cellY := TargetT - TargetMonT
+    cellW := TargetR - TargetL
+    cellH := TargetB - TargetT
+    labelSize := Min(24, Max(8, Floor(Min(cellW, cellH) / 4)))
+    labelWidth := Max(20, labelSize + 10)
+    labelHeight := Max(16, labelSize + 8)
+
+    for index, cell in cells {
+        border := TargetCellCtrls[index]
+        border.Move(cell[1] - TargetMonL, cell[2] - TargetMonT,
+            cell[3] - cell[1], cell[4] - cell[2])
+        border.Value := ""
+    }
+
+    ; Axis keys sit at the four edges of the active cell.
+    labels := [
+        [cellX + 4, cellY + Floor((cellH - labelHeight) / 2), "h"],
+        [cellX + cellW - labelWidth - 4, cellY + Floor((cellH - labelHeight) / 2), "l"],
+        [cellX + Floor((cellW - labelWidth) / 2), cellY + 4, "k"],
+        [cellX + Floor((cellW - labelWidth) / 2), cellY + cellH - labelHeight - 4, "j"]
+    ]
+    for index, spec in labels {
+        label := TargetCellLabels[index]
+        label.Move(spec[1], spec[2], labelWidth, labelHeight)
+        label.SetFont("s" labelSize " cFFFFFF w700", "Consolas")
+        label.Value := spec[3]
+    }
+
+    for ctrl in TargetAncestorCtrls
+        ctrl.Visible := false
+
+    index := 0
+    for rect in TargetHistory {
+        index += 1
+        if (index > TargetAncestorCtrls.Length)
+            break
+        ctrl := TargetAncestorCtrls[index]
+        ctrl.Move(rect["l"] - TargetMonL, rect["t"] - TargetMonT,
+            rect["r"] - rect["l"], rect["b"] - rect["t"])
+        ctrl.Visible := true
+    }
+}
+
+; Show the three Targeting layers over the current monitor.
+ShowTargetOverlay() {
+    global TargetDimGui, TargetAncestorGui, TargetGridGui
+    global TargetMonL, TargetMonT, TargetMonR, TargetMonB
+
+    width := TargetMonR - TargetMonL
+    height := TargetMonB - TargetMonT
+    position := "NA x" TargetMonL " y" TargetMonT " w" width " h" height
+
+    TargetDimGui.Show(position)
+    TargetAncestorGui.Show(position)
+    TargetGridGui.Show(position)
+    DrawTargetGrid()
+    RaiseOverlays()
+}
+
+; Hide all Targeting layers without destroying them.
+HideTargetOverlay() {
+    global TargetDimGui, TargetAncestorGui, TargetGridGui
+    try TargetDimGui.Hide()
+    try TargetAncestorGui.Hide()
+    try TargetGridGui.Hide()
+}
+
+; Hide Targeting while help is open; Targeting resumes when help closes.
+PauseTargetingForHelp() {
+    global TargetActive, TargetHelpPaused
+
+    if (!TargetActive) {
+        ShowHelp()
+        return
+    }
+
+    TargetHelpPaused := true
+    StopTargetHook()
+    HideTargetOverlay()
+    ShowHelp()
+}
+
+; Restore Targeting after the help overlay closes.
+ResumeTargetingAfterHelp() {
+    global TargetActive, TargetHelpPaused
+
+    if (!TargetActive || !TargetHelpPaused)
+        return false
+
+    TargetHelpPaused := false
+    ShowTargetOverlay()
+    StartTargetHook()
+    UpdateHUD(4)
+    RaiseOverlays()
+    return true
 }
 
 ; Toggle script suspension state
@@ -975,7 +1362,7 @@ GetFocusBorderRect(hwnd) {
 IsFocusBorderCandidate(hwnd) {
     global FocusBorderEnabled, VimMode, Suspended, EmergencyMode, HelpVisible, OverlayMode
 
-    if (!FocusBorderEnabled || VimMode == 0 || Suspended || EmergencyMode || HelpVisible || OverlayMode)
+    if (!FocusBorderEnabled || VimMode == 0 || VimMode == 4 || Suspended || EmergencyMode || HelpVisible || OverlayMode)
         return false
     if (!hwnd || !WinExist("ahk_id " hwnd))
         return false
@@ -1634,6 +2021,9 @@ EmergencyLayout() {
     global EmergencyMargin, EmergencyMinWidth, EmergencyMinHeight
     global EmergencyMaxWidth, EmergencyMaxHeight
 
+    ; Remove the Targeting input hook and overlay before moving windows.
+    try StopTargeting()
+
     ; Hide the always-on-top HUD, dock, and help overlay so they cannot cover
     ; the windows.
     if (IsSet(VimGui))
@@ -1704,6 +2094,12 @@ OnExit(CleanupAndExit)
 
 CleanupAndExit(ExitReason, ExitCode) {
     global EmergencyMode
+
+    ; Release the Targeting keyboard hook and overlays before exiting.
+    try StopTargetHook()
+    try TargetDimGui.Destroy()
+    try TargetAncestorGui.Destroy()
+    try TargetGridGui.Destroy()
 
     ; Retry the safe layout if the script is exiting because of an error.
     if (EmergencyMode || ExitReason = "Error")
@@ -1818,6 +2214,13 @@ CapsLock:: {
     ; F1 and Esc close help; CapsLock must not change the mode while it is open.
     if (HelpVisible)
         return
+
+    ; Targeting is a temporary mode; CapsLock leaves it and turns Vim off.
+    if (VimMode == 4) {
+        StopTargeting()
+        UpdateHUD(0)
+        return
+    }
 
     ; If suspended, resume by calling ToggleSuspend and enter Normal mode
     if (Suspended) {
@@ -1975,13 +2378,17 @@ g:: {
 }
 #HotIf
 
-; --- Escape (Normal, Visual, Insert) ---
+; --- Escape (Normal, Visual, Insert, Targeting) ---
 ; Esc stays hot while help is open so it can close the overlay; the other
 ; mode keys are disabled by !HelpVisible in their own contexts.
-#HotIf (VimMode == 1 || VimMode == 2 || VimMode == 3) && !Suspended
+#HotIf (VimMode >= 1 && VimMode <= 4) && !Suspended
 Esc:: {
     if (HelpVisible) {
         DismissHelp()
+        return
+    }
+    if (VimMode == 4) {
+        ExitTargeting(1)
         return
     }
     if (VimMode != 1)
@@ -1992,6 +2399,9 @@ Esc:: {
 
 ; --- Normal Vim Mode Commands ---
 #HotIf VimMode == 1 && !Suspended && !HelpVisible
+; Targeting
+m:: EnterTargeting()
+
 ; Find Commands
 f:: ExecuteFind(false)
 t:: ExecuteFind(true)
@@ -2108,7 +2518,7 @@ t:: return
 #HotIf
 
 ; --- Keybind Help ---
-#HotIf (VimMode == 1 || VimMode == 2 || VimMode == 3) && !Suspended && !EmergencyMode
+#HotIf (VimMode >= 1 && VimMode <= 4) && !Suspended && !EmergencyMode
 F1:: ToggleHelp()
 #HotIf
 
