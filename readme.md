@@ -23,7 +23,7 @@ This script was born out of necessity. Unable to use Linux with my preferred set
 - **Script Suspension**: Pause all window management with state preservation
 - **HUD Indicators**: Visual feedback for current mode, desktop, and suspension state
 - **Active Window Border**: A click-through cyan outline marks the active managed window
-- **Fully Customizable**: All colors, fonts, and timing variables configurable
+- **Fully Customizable**: UI colors and fonts, plus the main timing values, are configurable
 
 ## 📋 Requirements
 
@@ -80,6 +80,9 @@ The window row scrolls horizontally. Full-width windows use a focus layout: 85% 
 - **Full width is the focus layout**: the active window is 85% of the viewport.
   The gutters use the same `Gap` (8 px) as the tiled presets, and the remaining
   space shows a slice of the previous and next window
+- Maximized managed windows are restored before they are tiled. This prevents a
+  window from staying maximized at a tiled rectangle, which can look glitched
+  and hides the focus border.
 
 ### Window Width
 - **Ctrl+Shift+1**: 25% width
@@ -123,7 +126,7 @@ easy to tell apart.
 
 ### Visual Dock
 A transparent dock at the top-center of your screen shows:
-- **5 window icons** in stack order
+- **Five icon slots** in stack order; slots wrap when fewer than five windows are managed
 - **Window numbers** below each icon (shows position in stack)
 - **Center icon** (underlined in green): Current active window with bright green number
 - **Left 2 icons**: Previous windows (press `Tab` to go left) with gray numbers
@@ -191,7 +194,8 @@ When you resume the script:
 If the script hits an unhandled error, it moves every managed window to the
 same reachable rectangle near the top-left of the work area (up to 1200x800
 px; controlled by `EmergencyMargin`, `EmergencyMinWidth`/`Height`, and
-`EmergencyMaxWidth`/`Height`), hides the HUD and dock, and freezes reflow. It
+`EmergencyMaxWidth`/`Height`), hides the HUD, dock, help overlay, and focus
+border, and freezes reflow. It
 then shows the normal AutoHotkey error dialog. This keeps windows reachable
 even if the script stops. Emergency mode is terminal: CapsLock and Ctrl+Q do
 not resume it. Restart the script to restore tiling.
@@ -246,7 +250,7 @@ while it is open. F1 is not bound when Vim mode is off.
 |-----|--------|
 | **f{char}** | Find character forward on line |
 | **t{char}** | Till character (stop before it) |
-| **/** | Open find dialog (Ctrl+F) |
+| **/** | Open find dialog (Ctrl+F) and turn Vim mode Off |
 
 ### Editing Commands (Normal Mode)
 | Key | Action |
@@ -258,10 +262,13 @@ while it is open. F1 is not bound when Vim mode is off.
 | **O** (Shift+o) | Open new line above, then Insert |
 | **x** | Delete character |
 | **dd** | Delete entire line |
-| **cc** | Change line (delete, then Insert) |
-| **cw** | Change word (delete, then Insert) |
+| **c** | Change word (delete next word, then Insert) |
 | **u** | Undo |
 | **Ctrl+R** | Redo |
+
+`cc` and `cw` are not implemented by the current single-key `c` handler. `c`
+performs a word change; `cc` and `cw` currently type the second character. Use
+`dd` followed by `o` for a line change.
 
 ### Yank (Copy) & Paste
 | Key | Action |
@@ -281,6 +288,7 @@ while it is open. F1 is not bound when Vim mode is off.
 | **c** | Change selection (delete, then Insert) |
 | **x** | Delete selection |
 | **p** | Paste over the selection (Windows clipboard) |
+| **i** | Collapse selection to its start, then Insert |
 | **gg** | Extend selection to document start |
 | **G** | Extend selection to document end |
 | **Esc** | Return to Normal |
@@ -317,7 +325,9 @@ are application shortcuts, not Vim commands: in a browser, `:w` opens
 | **8** | Jump to window #8 in stack |
 | **9** | Jump to window #9 in stack |
 
-**Note**: Numbers correspond to the position shown in the dock. Flash message confirms: "WINDOW X" or "WINDOW X NOT FOUND"
+**Note**: Numbers correspond to the position shown in the dock. The flash
+message confirms "WINDOW X"; an out-of-range number shows "WINDOW X NOT FOUND",
+and a hidden target shows "WINDOW X NOT AVAILABLE".
 
 ---
 
@@ -348,7 +358,7 @@ are application shortcuts, not Vim commands: in a browser, `:w` opens
 ## 🔍 How It Works
 
 ### Window Stack Management
-1. On startup, all existing windows with title bars are added to the stack
+1. On startup, all existing visible windows with title bars are added to the stack
 2. New windows are automatically detected and added via Windows Shell Hook
 3. Closed or hidden windows are automatically removed; a visible window is
    re-added when it is activated again
@@ -372,7 +382,8 @@ are application shortcuts, not Vim commands: in a browser, `:w` opens
 - Uses a Map to track which desktops have been initialized
 - On desktop switch, checks if arrangement is needed
 - Waits 200ms after desktop switch for animation to complete
-- Each desktop maintains its own window arrangement
+- The script keeps one global window stack; Windows preserves window positions
+  on other desktops. There is no separate per-desktop stack.
 
 ### Vim Mode
 - CapsLock toggles a global `VimMode` variable (0=off, 1=normal, 2=visual, 3=insert)
@@ -511,8 +522,9 @@ If the dock shows blank spaces or default icons instead of app icons:
 - **Solution**: Run the script as administrator (right-click → "Run as administrator")
 - **Alternative**: Accept that some system windows will show default icons in the dock
 
-### Dock shows duplicate icons
-- This should be fixed; if it occurs, restart the script
+### Dock repeats icons with fewer than five windows
+- The dock always fills five slots and wraps around the stack, so an icon can
+  repeat when fewer than five windows are managed. This is expected.
 
 ### Vim mode stuck on
 - Press **CapsLock** to toggle off

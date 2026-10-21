@@ -1,6 +1,6 @@
 ; ==============================================================================
 ; Paper-VIM: Vim Keybindings + PaperWM Window Manager
-; Version: 1.3.1
+; Version: 1.3.2
 ; Author: KamilGolis
 ; Description: Combines vim-style navigation with PaperWM tiling window manager
 ; License: MIT
@@ -1083,6 +1083,15 @@ UpdateFocusBorder() {
     ShowFocusBorder(hwnd, rect[1], rect[2], rect[3], rect[4])
 }
 
+; Restore a maximized or minimized window without changing keyboard focus.
+; ShowWindow's SW_SHOWNOACTIVATE (4) clears the maximized state without the
+; activation that WinRestore performs on background windows.
+RestoreWindowNoActivate(hwnd) {
+    if (!hwnd || !WinExist("ahk_id " hwnd))
+        return
+    try DllCall("ShowWindow", "Ptr", hwnd, "Int", 4)
+}
+
 ; Reflow window positions in the stack
 ; Repositions all windows based on current layout mode and active window
 ; @param centerActive - Center the active window instead of only scrolling
@@ -1180,7 +1189,7 @@ ReflowStack(centerActive := false) {
         overlayHeight := Max(1, WorkHeight - (2 * Gap))
         for hwnd in WindowStack {
             try {
-                WinRestore(hwnd)
+                RestoreWindowNoActivate(hwnd)
                 WinMove(overlayLeft, overlayTop, overlayWidth, overlayHeight, hwnd)
             }
             catch as err
@@ -1232,10 +1241,15 @@ ReflowStack(centerActive := false) {
         for i, hwnd in WindowStack {
             ; WinMove cannot move minimized windows; they keep their old
             ; position and are repositioned by the reflow triggered when
-            ; they are restored
+            ; they are restored. A maximized window must be restored first:
+            ; moving it while maximized leaves it in a maximized state at a
+            ; tiled rectangle, which also hides the focus border.
             try {
-                if (WinGetMinMax(hwnd) = -1)
+                minMax := WinGetMinMax(hwnd)
+                if (minMax = -1)
                     continue
+                if (minMax = 1)
+                    RestoreWindowNoActivate(hwnd)
             }
             catch as err
                 continue
