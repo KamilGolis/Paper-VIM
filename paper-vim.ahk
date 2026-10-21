@@ -1,6 +1,6 @@
 ; ==============================================================================
 ; Paper-VIM: Vim Keybindings + PaperWM Window Manager
-; Version: 1.2.0
+; Version: 1.3.2
 ; Author: KamilGolis
 ; Description: Combines vim-style navigation with PaperWM tiling window manager
 ; License: MIT
@@ -74,6 +74,19 @@ global FlashMsgColor := "cFFFF00"         ; Flash message color (yellow)
 global SuspendedModeColor := "cFF8800"    ; Suspended mode text color (orange)
 global ActiveIndicatorColor := "00FF00"   ; Dock active window underline (green)
 global DockInactiveNumberColor := "c888888" ; Dock inactive window number color (gray)
+
+; --- Focus Border Configuration ---
+global FocusBorderEnabled := true        ; Draw a focus border around the active window
+global FocusBorderColor := "00A8FF"      ; Focus border color (cyan)
+global FocusBorderThickness := 3         ; Border thickness in physical pixels
+global FocusBorderUpdateInterval := 50   ; Timer interval for move/resize tracking (ms)
+global FocusBars := []                   ; Four click-through border Gui windows
+global FocusBorderShown := false         ; Border bars are currently visible
+global FocusBorderTarget := 0            ; Window handle the border is tracking
+global FocusBorderX := 0                 ; Cached outer border coordinates
+global FocusBorderY := 0
+global FocusBorderW := 0
+global FocusBorderH := 0
 
 ; --- Font Configuration ---
 global FontFamily := "Segoe UI"          ; Font family used throughout UI
@@ -156,6 +169,17 @@ HelpLeftCtl := HelpGui.Add("Text", "x20 y20 w" helpLeftWidth " h" helpHeight " -
 HelpRightCtl := HelpGui.Add("Text", "x" (20 + helpLeftWidth + 20) " y20 w" helpRightWidth " h" helpHeight " -Wrap", "")
 HelpGui.OnEvent("Close", (*) => DismissHelp())
 
+; Focus border bars: four click-through, never-active windows. -DPIScale keeps
+; their coordinates in physical pixels, matching DWM frame bounds.
+loop 4 {
+    FocusBorderBar := Gui("+AlwaysOnTop -Caption +ToolWindow +E0x20 +E0x80000 +E0x08000000 -DPIScale")
+    FocusBorderBar.BackColor := FocusBorderColor
+    FocusBorderBar.Show("NA x0 y0 w1 h1 Hide")
+    ; Layered + transparent extended style makes the bar click-through.
+    WinSetTransparent(255, FocusBorderBar)
+    FocusBars.Push(FocusBorderBar)
+}
+
 ; ==============================================================================
 ; CORE FUNCTIONS
 ; ==============================================================================
@@ -179,6 +203,7 @@ UpdateHUD(NewState) {
 
     ; Keep the HUD inside the usable area when the taskbar moves
     RefreshWorkArea()
+    UpdateFocusBorder()
 
     ; If suspended, always show suspended state
     if (Suspended) {
@@ -256,6 +281,7 @@ ShowHelp() {
     HelpLeftCtl.Value := panels[1]
     HelpRightCtl.Value := panels[2]
     HelpVisible := true
+    UpdateFocusBorder()
     try VimGui.Hide()
     try {
         HelpGui.Show("AutoSize Center")
@@ -418,6 +444,7 @@ ToggleSuspend() {
         
         ; Now suspend
         Suspended := true
+        HideFocusBorder()
         
         ; Show suspended notification
         UpdateHUD(VimMode)
@@ -455,6 +482,7 @@ ToggleSuspend() {
         ; Resume normal operation
         UpdateHUD(VimMode)
         UpdateDock()
+        UpdateFocusBorder()
     }
 }
 
@@ -754,6 +782,9 @@ OnMessage(DllCall("RegisterWindowMessage", "Str", "SHELLHOOK"), ShellMessage)
 ; @param wParam - Message type (1=created, 2=destroyed, 4/32772=activated)
 ; @param lParam - Window handle
 ShellMessage(wParam, lParam, *) {
+    ; Keep the focus border current even when layout changes are frozen.
+    UpdateFocusBorder()
+
     ; Ignore all window events when layout is frozen
     if (LayoutFrozen())
         return
@@ -768,7 +799,9 @@ ShellMessage(wParam, lParam, *) {
         ; Window activated or flashed (including taskbar clicks).
         ; The window is already focused at this point; re-activating it would
         ; fight the shell (Alt-Tab, Task View). Just reflow so the layout
-        ; and dock follow the focused window.
+        ; and dock follow the focused window. Re-add a visible window that
+        ; was removed from the stack while it was hidden.
+        ManageNewWindow(lParam, true)
         DeferredReflow()
     }
 }
@@ -785,12 +818,18 @@ DeferredReflow() {
 
 ; Add new window to management stack if it should be managed
 ; @param hwnd - Window handle to potentially manage
-ManageNewWindow(hwnd) {
+ManageNewWindow(hwnd, requireVisible := false) {
     global WindowWidths
     if (!hwnd || LayoutFrozen())
         return
     
     if (!WinExist(hwnd))
+        return
+
+    ; Activation can be used to re-add a window that was hidden and then
+    ; shown again. Creation events may fire before the window is visible, so
+    ; the creation path leaves this check off.
+    if (requireVisible && !IsStackWindow(hwnd))
         return
     
     ; Check if window should be managed
@@ -879,6 +918,180 @@ ShouldManageWindow(hwnd) {
     }
 }
 
+; ==============================================================================
+; FOCUS BORDER
+; ==============================================================================
+
+; Hide the focus border and clear its cached geometry.
+HideFocusBorder() {
+    global FocusBars, FocusBorderShown, FocusBorderTarget
+    global FocusBorderX, FocusBorderY, FocusBorderW, FocusBorderH
+
+    if (!IsSet(FocusBars))
+        return
+
+    if (FocusBorderShown) {
+        for bar in FocusBars {
+            try bar.Hide()
+        }
+    }
+    FocusBorderShown := false
+    FocusBorderTarget := 0
+    FocusBorderX := 0
+    FocusBorderY := 0
+    FocusBorderW := 0
+    FocusBorderH := 0
+}
+
+; Get the visible frame of a window in physical pixels. DWM's extended frame
+; bounds exclude the invisible resize border that WinGetPos includes.
+; @param hwnd - Window handle
+; @return Array [left, top, right, bottom], or 0 when unavailable
+GetFocusBorderRect(hwnd) {
+    rect := Buffer(16, 0)
+    hr := DllCall("dwmapi\DwmGetWindowAttribute", "Ptr", hwnd, "UInt", 9, "Ptr", rect, "UInt", 16, "UInt")
+    if (hr = 0) {
+        left := NumGet(rect, 0, "Int")
+        top := NumGet(rect, 4, "Int")
+        right := NumGet(rect, 8, "Int")
+        bottom := NumGet(rect, 12, "Int")
+        if (right > left && bottom > top)
+            return [left, top, right, bottom]
+    }
+
+    try {
+        WinGetPos(&x, &y, &w, &h, "ahk_id " hwnd)
+        if (w > 0 && h > 0)
+            return [x, y, x + w, y + h]
+    } catch as err {
+        ; Fall through to the unavailable result
+    }
+    return 0
+}
+
+; Check whether a window should get the focus border.
+; @param hwnd - Candidate active window
+; @return True when the window is managed and visible in tiled mode
+IsFocusBorderCandidate(hwnd) {
+    global FocusBorderEnabled, VimMode, Suspended, EmergencyMode, HelpVisible, OverlayMode
+
+    if (!FocusBorderEnabled || VimMode == 0 || Suspended || EmergencyMode || HelpVisible || OverlayMode)
+        return false
+    if (!hwnd || !WinExist("ahk_id " hwnd))
+        return false
+    if (GetStackIndex(hwnd) == 0)
+        return false
+
+    try {
+        if (WinGetMinMax("ahk_id " hwnd) != 0)
+            return false
+    } catch as err {
+        return false
+    }
+    return true
+}
+
+; Keep the HUD and dock above the border bars after the bars are raised.
+RaiseOverlays() {
+    global VimGui, DockGui
+    flags := 0x0001 | 0x0002 | 0x0010   ; NOSIZE | NOMOVE | NOACTIVATE
+
+    if (IsSet(VimGui) && VimGui.Hwnd)
+        try DllCall("SetWindowPos", "Ptr", VimGui.Hwnd, "Ptr", -1, "Int", 0, "Int", 0, "Int", 0, "Int", 0, "UInt", flags)
+    if (IsSet(DockGui) && DockGui.Hwnd)
+        try DllCall("SetWindowPos", "Ptr", DockGui.Hwnd, "Ptr", -1, "Int", 0, "Int", 0, "Int", 0, "Int", 0, "UInt", flags)
+}
+
+; Position the four border bars around the visible window frame.
+; @param hwnd - Window handle being tracked
+; @param left - Visible frame left edge
+; @param top - Visible frame top edge
+; @param right - Visible frame right edge
+; @param bottom - Visible frame bottom edge
+ShowFocusBorder(hwnd, left, top, right, bottom) {
+    global FocusBars, FocusBorderThickness, FocusBorderShown
+    global FocusBorderTarget, FocusBorderX, FocusBorderY, FocusBorderW, FocusBorderH
+
+    if (FocusBars.Length < 4)
+        return
+
+    t := Max(1, FocusBorderThickness)
+    x := left - t
+    y := top - t
+    r := right + t
+    b := bottom + t
+    w := r - x
+    h := b - y
+    if (w <= 2 * t || h <= 2 * t)
+        return
+
+    FocusBars[1].Show("NA x" x " y" y " w" w " h" t)
+    FocusBars[2].Show("NA x" x " y" (b - t) " w" w " h" t)
+    FocusBars[3].Show("NA x" x " y" (y + t) " w" t " h" (h - 2 * t))
+    FocusBars[4].Show("NA x" (r - t) " y" (y + t) " w" t " h" (h - 2 * t))
+
+    FocusBorderTarget := hwnd
+    FocusBorderX := x
+    FocusBorderY := y
+    FocusBorderW := w
+    FocusBorderH := h
+    FocusBorderShown := true
+    RaiseOverlays()
+}
+
+; Update the focus border from the current active window.
+UpdateFocusBorder() {
+    global FocusBorderEnabled, FocusBorderThickness, FocusBorderShown
+    global FocusBorderTarget, FocusBorderX, FocusBorderY, FocusBorderW, FocusBorderH
+    global WorkLeft, WorkTop, WorkWidth, WorkHeight
+
+    if (!FocusBorderEnabled) {
+        HideFocusBorder()
+        return
+    }
+
+    hwnd := WinActive("A")
+    if (!IsFocusBorderCandidate(hwnd)) {
+        HideFocusBorder()
+        return
+    }
+
+    rect := GetFocusBorderRect(hwnd)
+    if (!rect) {
+        HideFocusBorder()
+        return
+    }
+
+    ; A normal window that covers the whole work area is effectively
+    ; fullscreen; the border would be clipped at the screen edges.
+    if (rect[1] <= WorkLeft && rect[2] <= WorkTop
+        && rect[3] >= WorkLeft + WorkWidth && rect[4] >= WorkTop + WorkHeight) {
+        HideFocusBorder()
+        return
+    }
+
+    t := Max(1, FocusBorderThickness)
+    x := rect[1] - t
+    y := rect[2] - t
+    w := (rect[3] + t) - x
+    h := (rect[4] + t) - y
+    if (FocusBorderShown && hwnd == FocusBorderTarget
+        && x == FocusBorderX && y == FocusBorderY
+        && w == FocusBorderW && h == FocusBorderH)
+        return
+
+    ShowFocusBorder(hwnd, rect[1], rect[2], rect[3], rect[4])
+}
+
+; Restore a maximized or minimized window without changing keyboard focus.
+; ShowWindow's SW_SHOWNOACTIVATE (4) clears the maximized state without the
+; activation that WinRestore performs on background windows.
+RestoreWindowNoActivate(hwnd) {
+    if (!hwnd || !WinExist("ahk_id " hwnd))
+        return
+    try DllCall("ShowWindow", "Ptr", hwnd, "Int", 4)
+}
+
 ; Reflow window positions in the stack
 ; Repositions all windows based on current layout mode and active window
 ; @param centerActive - Center the active window instead of only scrolling
@@ -902,6 +1115,7 @@ ReflowStack(centerActive := false) {
         WindowWidths.Clear()
         UpdateDock()
         Critical "Off"
+        UpdateFocusBorder()
         return
     }
     activeHwnd := WinActive("A")
@@ -913,7 +1127,7 @@ ReflowStack(centerActive := false) {
     loop n {
         idx := n - A_Index + 1
         try {
-            if (!WinExist(WindowStack[idx])) {
+            if (!IsStackWindow(WindowStack[idx])) {
                 if (WindowStack[idx] == activeHwnd)
                     activeRemoved := true
                 ForgetWindowWidth(WindowStack[idx])
@@ -939,6 +1153,7 @@ ReflowStack(centerActive := false) {
         WindowWidths.Clear()
         UpdateDock()
         Critical "Off"
+        UpdateFocusBorder()
         return
     }
 
@@ -953,6 +1168,7 @@ ReflowStack(centerActive := false) {
             } catch as err {
                 UpdateDock()
                 Critical "Off"
+                UpdateFocusBorder()
                 return
             }
         } else {
@@ -960,6 +1176,7 @@ ReflowStack(centerActive := false) {
             ; keep the current layout instead of stealing focus
             UpdateDock()
             Critical "Off"
+            UpdateFocusBorder()
             return
         }
     }
@@ -972,7 +1189,7 @@ ReflowStack(centerActive := false) {
         overlayHeight := Max(1, WorkHeight - (2 * Gap))
         for hwnd in WindowStack {
             try {
-                WinRestore(hwnd)
+                RestoreWindowNoActivate(hwnd)
                 WinMove(overlayLeft, overlayTop, overlayWidth, overlayHeight, hwnd)
             }
             catch as err
@@ -1024,10 +1241,15 @@ ReflowStack(centerActive := false) {
         for i, hwnd in WindowStack {
             ; WinMove cannot move minimized windows; they keep their old
             ; position and are repositioned by the reflow triggered when
-            ; they are restored
+            ; they are restored. A maximized window must be restored first:
+            ; moving it while maximized leaves it in a maximized state at a
+            ; tiled rectangle, which also hides the focus border.
             try {
-                if (WinGetMinMax(hwnd) = -1)
+                minMax := WinGetMinMax(hwnd)
+                if (minMax = -1)
                     continue
+                if (minMax = 1)
+                    RestoreWindowNoActivate(hwnd)
             }
             catch as err
                 continue
@@ -1041,6 +1263,7 @@ ReflowStack(centerActive := false) {
 
     UpdateDock()
     Critical "Off"
+    UpdateFocusBorder()
 }
 
 ; ==============================================================================
@@ -1102,6 +1325,44 @@ GetStackIndex(hwnd) {
         if (item == hwnd)
             return i
     return 0
+}
+
+; True when a window still exists and is visible on the desktop.
+; Minimized windows count as visible; hidden windows do not.
+; @param hwnd - Window handle
+; @return True when the window belongs in the visible stack
+IsStackWindow(hwnd) {
+    if (!hwnd || !WinExist("ahk_id " hwnd))
+        return false
+    try {
+        return (WinGetStyle("ahk_id " hwnd) & 0x10000000) != 0
+    } catch as err {
+        return false
+    }
+}
+
+; Remove hidden or destroyed windows from the stack. A window can be managed
+; while visible and then hidden without being destroyed (for example, a
+; command palette). Leaving it in the stack reserves a layout slot and makes
+; the window row look wrong.
+PruneWindowStack() {
+    global WindowStack
+    if (LayoutFrozen())
+        return
+
+    changed := false
+    n := WindowStack.Length
+    loop n {
+        idx := n - A_Index + 1
+        if (!IsStackWindow(WindowStack[idx])) {
+            ForgetWindowWidth(WindowStack[idx])
+            WindowStack.RemoveAt(idx)
+            changed := true
+        }
+    }
+
+    if (changed)
+        DeferredReflow()
 }
 
 ; Get the width ratio remembered for a window
@@ -1176,7 +1437,11 @@ CycleStack(direction) {
     ; Don't cycle when layout is frozen
     if (LayoutFrozen())
         return
-    
+
+    ; Remove hidden windows before choosing a target. Otherwise WinActivate can
+    ; land on a hidden command-palette or tray window and leave no visible focus.
+    PruneWindowStack()
+
     if (WindowStack.Length <= 1)
         return
 
@@ -1185,11 +1450,19 @@ CycleStack(direction) {
     if (activeIndex == 0)
         return
 
-    newIndex := activeIndex + direction
-    if (newIndex < 1)
-        newIndex := WindowStack.Length
-    else if (newIndex > WindowStack.Length)
-        newIndex := 1
+    newIndex := activeIndex
+    loop WindowStack.Length - 1 {
+        newIndex += direction
+        if (newIndex < 1)
+            newIndex := WindowStack.Length
+        else if (newIndex > WindowStack.Length)
+            newIndex := 1
+        if (IsStackWindow(WindowStack[newIndex]))
+            break
+    }
+
+    if (newIndex == activeIndex)
+        return
 
     try WinActivate(WindowStack[newIndex])
     catch as err
@@ -1213,8 +1486,14 @@ GoToWindowByIndex(index) {
         return
     }
 
+    target := WindowStack[index]
+    if (!IsStackWindow(target)) {
+        FlashMessage("WINDOW " . index . " NOT AVAILABLE")
+        return
+    }
+
     try {
-        WinActivate(WindowStack[index])
+        WinActivate(target)
         FlashMessage("WINDOW " . index)
         ; Update dock after window activation
         SetTimer(() => UpdateDock(), -DockUpdateDelay)
@@ -1235,7 +1514,7 @@ InitializeExistingWindows() {
     for hwnd in windowList {
         try {
             ; Use the same filtering logic as ManageNewWindow
-            if (!ShouldManageWindow(hwnd))
+            if (!ShouldManageWindow(hwnd) || !IsStackWindow(hwnd))
                 continue
             
             title := WinGetTitle(hwnd)
@@ -1363,6 +1642,7 @@ EmergencyLayout() {
         try DockGui.Hide()
     if (IsSet(HelpGui))
         try HelpGui.Hide()
+    try HideFocusBorder()
     HelpVisible := false
 
     availableWidth := WorkWidth
@@ -1444,6 +1724,15 @@ CleanupAndExit(ExitReason, ExitCode) {
     catch as err {
         ; Already destroyed
     }
+
+    if (IsSet(FocusBars)) {
+        for bar in FocusBars {
+            try bar.Destroy()
+            catch as err {
+                ; Already destroyed
+            }
+        }
+    }
     
     ; Show taskbar if it was hidden
     if (TaskbarHidden) {
@@ -1515,6 +1804,14 @@ try {
 catch as err {
     MsgBox("Failed to initialize windows on startup: " err.Message, "Warning", "Icon!")
 }
+
+; Track the active window for the focus border. The shell hook handles
+; activation immediately; this timer catches moves, resizes, and restores.
+SetTimer(UpdateFocusBorder, FocusBorderUpdateInterval)
+
+; Remove windows that were hidden without being destroyed. Without this, a
+; hidden window keeps a layout slot and pushes later windows off-screen.
+SetTimer(PruneWindowStack, 500)
 
 ; Toggle Vim mode with CapsLock
 CapsLock:: {
