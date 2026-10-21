@@ -22,6 +22,7 @@ This script was born out of necessity. Unable to use Linux with my preferred set
 - **Smart Window Tracking**: Automatic management of new/closed windows with taskbar click support
 - **Script Suspension**: Pause all window management with state preservation
 - **HUD Indicators**: Visual feedback for current mode, desktop, and suspension state
+- **Active Window Border**: A click-through cyan outline marks the active managed window
 - **Fully Customizable**: All colors, fonts, and timing variables configurable
 
 ## 📋 Requirements
@@ -106,6 +107,19 @@ The 25/50/75 presets use niri-style edge scrolling.
 - **Ctrl+F**: Toggle Overlay Mode (all windows maximized with small gaps, stacked)
 - **Ctrl+T**: Toggle Windows Taskbar visibility (windows auto-resize to use available space)
 - **Ctrl+Shift+D**: Remove active window from managed stack
+
+### Active Window Border
+A 3 px cyan outline marks the active managed window, so two adjacent windows are
+easy to tell apart.
+
+- The border is drawn outside the visible DWM frame, so it does not cover the
+  window content.
+- It is click-through and never takes keyboard focus.
+- It follows moves, resizes, focus changes, and width changes.
+- It is hidden in Off mode, while the help overlay is open, while the script is
+  suspended, in emergency mode, in Overlay Mode, and for maximized or fullscreen
+  windows.
+- Like the rest of the layout, it currently follows the main-monitor limitation.
 
 ### Visual Dock
 A transparent dock at the top-center of your screen shows:
@@ -442,6 +456,15 @@ Global DockPosY := 10                        ; Dock Y position from the top of t
 Global HUDMarginRight := 20                  ; HUD distance from the right edge of the work area
 Global HUDPosY := 40                         ; HUD Y position from the top of the work area
 Global HUDWidth := 220                       ; HUD text control width; window auto-sizes
+```
+
+### Focus Border Configuration
+
+```ahk
+Global FocusBorderEnabled := true            ; Draw a focus border around the active window
+Global FocusBorderColor := "00A8FF"          ; Focus border color (cyan)
+Global FocusBorderThickness := 3             ; Border thickness in physical pixels
+Global FocusBorderUpdateInterval := 50       ; Move/resize tracking interval (ms)
 ```
 
 ### Timing Configuration
