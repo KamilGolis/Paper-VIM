@@ -1,6 +1,6 @@
 ; ==============================================================================
 ; Paper-VIM: Vim Keybindings + PaperWM Window Manager
-; Version: 1.4.0
+; Version: 1.4.1
 ; Author: KamilGolis
 ; Description: Combines vim-style navigation with PaperWM tiling window manager
 ; License: MIT
@@ -78,7 +78,7 @@ global TargetDimGui := ""             ; Full-monitor dim layer
 global TargetAncestorGui := ""        ; Faint outlines of previous cells
 global TargetGridGui := ""            ; Current 2x2 grid labels
 global TargetCellCtrls := []          ; Four cell border controls
-global TargetCellLabels := []         ; Four axis label controls
+global TargetCellLabels := []         ; Four cell key-pair label controls
 global TargetAncestorCtrls := []      ; Fixed pool of previous-outline controls
 global TargetMinCellSize := 8         ; Stop splitting below this cell size (px)
 
@@ -690,33 +690,27 @@ DrawTargetGrid() {
         [midX, midY, TargetR, TargetB]
     ]
 
-    cellX := TargetL - TargetMonL
-    cellY := TargetT - TargetMonT
-    cellW := TargetR - TargetL
-    cellH := TargetB - TargetT
-    labelSize := Min(24, Max(8, Floor(Min(cellW, cellH) / 4)))
-    labelWidth := Max(20, labelSize + 10)
-    labelHeight := Max(16, labelSize + 8)
+    activeW := TargetR - TargetL
+    activeH := TargetB - TargetT
+    labelSize := Min(22, Max(7, Floor(Min(activeW, activeH) / 4)))
+    labelHeight := Max(38, labelSize + 16)
 
+    ; Each cell carries its complete x/y key pair, centered inside the cell.
+    cellLabels := ["h k", "l k", "h j", "l j"]
     for index, cell in cells {
-        border := TargetCellCtrls[index]
-        border.Move(cell[1] - TargetMonL, cell[2] - TargetMonT,
-            cell[3] - cell[1], cell[4] - cell[2])
-        border.Value := ""
-    }
+        cellX := cell[1] - TargetMonL
+        cellY := cell[2] - TargetMonT
+        cellW := cell[3] - cell[1]
+        cellH := cell[4] - cell[2]
 
-    ; Axis keys sit at the four edges of the active cell.
-    labels := [
-        [cellX + 4, cellY + Floor((cellH - labelHeight) / 2), "h"],
-        [cellX + cellW - labelWidth - 4, cellY + Floor((cellH - labelHeight) / 2), "l"],
-        [cellX + Floor((cellW - labelWidth) / 2), cellY + 4, "k"],
-        [cellX + Floor((cellW - labelWidth) / 2), cellY + cellH - labelHeight - 4, "j"]
-    ]
-    for index, spec in labels {
+        border := TargetCellCtrls[index]
+        border.Move(cellX, cellY, cellW, cellH)
+        border.Value := ""
+
         label := TargetCellLabels[index]
-        label.Move(spec[1], spec[2], labelWidth, labelHeight)
+        label.Move(cellX, cellY + Floor((cellH - labelHeight) / 2), cellW, labelHeight)
         label.SetFont("s" labelSize " cFFFFFF w700", "Consolas")
-        label.Value := spec[3]
+        label.Value := cellLabels[index]
     }
 
     for ctrl in TargetAncestorCtrls

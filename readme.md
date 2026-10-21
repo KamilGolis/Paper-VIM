@@ -313,12 +313,11 @@ into the document.
 | **CapsLock** | Turn Vim off |
 | **F1** | Toggle help; closing help returns to Targeting |
 
-The grid covers the full monitor, including the taskbar. The horizontal keys
-(`h`/`l`) appear at the left/right edges, and the vertical keys (`k`/`j`) at
-the top/bottom. Press one horizontal and one vertical key, in either order. The
-pointer moves to the center of the selected cell, and that cell is split into
-another 2x2 grid. Repeat to refine. Previous grid outlines remain faintly
-visible.
+The grid covers the full monitor, including the taskbar. Each cell shows its
+complete key pair, such as `h k`, `l k`, `h j`, or `l j`. Press the two letters
+in either order. The pointer moves to the center of the selected cell, and that
+cell is split into another 2x2 grid. Repeat to refine. Previous grid outlines
+remain faintly visible.
 
 The grid stops splitting below `TargetMinCellSize` (8 px by default). The dark
 overlay is click-through and does not take mouse focus. It moves the pointer
