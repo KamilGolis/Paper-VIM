@@ -1,6 +1,6 @@
 ; ==============================================================================
 ; Paper-VIM: Vim Keybindings + PaperWM Window Manager
-; Version: 1.3.0
+; Version: 1.3.1
 ; Author: KamilGolis
 ; Description: Combines vim-style navigation with PaperWM tiling window manager
 ; License: MIT
@@ -799,7 +799,9 @@ ShellMessage(wParam, lParam, *) {
         ; Window activated or flashed (including taskbar clicks).
         ; The window is already focused at this point; re-activating it would
         ; fight the shell (Alt-Tab, Task View). Just reflow so the layout
-        ; and dock follow the focused window.
+        ; and dock follow the focused window. Re-add a visible window that
+        ; was removed from the stack while it was hidden.
+        ManageNewWindow(lParam, true)
         DeferredReflow()
     }
 }
@@ -816,12 +818,18 @@ DeferredReflow() {
 
 ; Add new window to management stack if it should be managed
 ; @param hwnd - Window handle to potentially manage
-ManageNewWindow(hwnd) {
+ManageNewWindow(hwnd, requireVisible := false) {
     global WindowWidths
     if (!hwnd || LayoutFrozen())
         return
     
     if (!WinExist(hwnd))
+        return
+
+    ; Activation can be used to re-add a window that was hidden and then
+    ; shown again. Creation events may fire before the window is visible, so
+    ; the creation path leaves this check off.
+    if (requireVisible && !IsStackWindow(hwnd))
         return
     
     ; Check if window should be managed
@@ -1110,7 +1118,7 @@ ReflowStack(centerActive := false) {
     loop n {
         idx := n - A_Index + 1
         try {
-            if (!WinExist(WindowStack[idx])) {
+            if (!IsStackWindow(WindowStack[idx])) {
                 if (WindowStack[idx] == activeHwnd)
                     activeRemoved := true
                 ForgetWindowWidth(WindowStack[idx])
@@ -1305,6 +1313,44 @@ GetStackIndex(hwnd) {
     return 0
 }
 
+; True when a window still exists and is visible on the desktop.
+; Minimized windows count as visible; hidden windows do not.
+; @param hwnd - Window handle
+; @return True when the window belongs in the visible stack
+IsStackWindow(hwnd) {
+    if (!hwnd || !WinExist("ahk_id " hwnd))
+        return false
+    try {
+        return (WinGetStyle("ahk_id " hwnd) & 0x10000000) != 0
+    } catch as err {
+        return false
+    }
+}
+
+; Remove hidden or destroyed windows from the stack. A window can be managed
+; while visible and then hidden without being destroyed (for example, a
+; command palette). Leaving it in the stack reserves a layout slot and makes
+; the window row look wrong.
+PruneWindowStack() {
+    global WindowStack
+    if (LayoutFrozen())
+        return
+
+    changed := false
+    n := WindowStack.Length
+    loop n {
+        idx := n - A_Index + 1
+        if (!IsStackWindow(WindowStack[idx])) {
+            ForgetWindowWidth(WindowStack[idx])
+            WindowStack.RemoveAt(idx)
+            changed := true
+        }
+    }
+
+    if (changed)
+        DeferredReflow()
+}
+
 ; Get the width ratio remembered for a window
 ; @param hwnd - Window handle
 ; @return Width ratio relative to the work area width
@@ -1377,7 +1423,11 @@ CycleStack(direction) {
     ; Don't cycle when layout is frozen
     if (LayoutFrozen())
         return
-    
+
+    ; Remove hidden windows before choosing a target. Otherwise WinActivate can
+    ; land on a hidden command-palette or tray window and leave no visible focus.
+    PruneWindowStack()
+
     if (WindowStack.Length <= 1)
         return
 
@@ -1386,11 +1436,19 @@ CycleStack(direction) {
     if (activeIndex == 0)
         return
 
-    newIndex := activeIndex + direction
-    if (newIndex < 1)
-        newIndex := WindowStack.Length
-    else if (newIndex > WindowStack.Length)
-        newIndex := 1
+    newIndex := activeIndex
+    loop WindowStack.Length - 1 {
+        newIndex += direction
+        if (newIndex < 1)
+            newIndex := WindowStack.Length
+        else if (newIndex > WindowStack.Length)
+            newIndex := 1
+        if (IsStackWindow(WindowStack[newIndex]))
+            break
+    }
+
+    if (newIndex == activeIndex)
+        return
 
     try WinActivate(WindowStack[newIndex])
     catch as err
@@ -1414,8 +1472,14 @@ GoToWindowByIndex(index) {
         return
     }
 
+    target := WindowStack[index]
+    if (!IsStackWindow(target)) {
+        FlashMessage("WINDOW " . index . " NOT AVAILABLE")
+        return
+    }
+
     try {
-        WinActivate(WindowStack[index])
+        WinActivate(target)
         FlashMessage("WINDOW " . index)
         ; Update dock after window activation
         SetTimer(() => UpdateDock(), -DockUpdateDelay)
@@ -1436,7 +1500,7 @@ InitializeExistingWindows() {
     for hwnd in windowList {
         try {
             ; Use the same filtering logic as ManageNewWindow
-            if (!ShouldManageWindow(hwnd))
+            if (!ShouldManageWindow(hwnd) || !IsStackWindow(hwnd))
                 continue
             
             title := WinGetTitle(hwnd)
@@ -1730,6 +1794,10 @@ catch as err {
 ; Track the active window for the focus border. The shell hook handles
 ; activation immediately; this timer catches moves, resizes, and restores.
 SetTimer(UpdateFocusBorder, FocusBorderUpdateInterval)
+
+; Remove windows that were hidden without being destroyed. Without this, a
+; hidden window keeps a layout slot and pushes later windows off-screen.
+SetTimer(PruneWindowStack, 500)
 
 ; Toggle Vim mode with CapsLock
 CapsLock:: {

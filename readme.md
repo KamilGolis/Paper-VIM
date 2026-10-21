@@ -350,7 +350,8 @@ are application shortcuts, not Vim commands: in a browser, `:w` opens
 ### Window Stack Management
 1. On startup, all existing windows with title bars are added to the stack
 2. New windows are automatically detected and added via Windows Shell Hook
-3. Closed windows are automatically removed
+3. Closed or hidden windows are automatically removed; a visible window is
+   re-added when it is activated again
 4. Windows are laid out left to right in stack order, each with its remembered width
 5. The view offset scrolls only when the focused window would leave the screen,
    matching niri's `center-focused-column "never"` behavior
