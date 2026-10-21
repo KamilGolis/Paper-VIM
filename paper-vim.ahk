@@ -1,6 +1,6 @@
 ; ==============================================================================
 ; Paper-VIM: Vim Keybindings + PaperWM Window Manager
-; Version: 1.4.2
+; Version: 1.5.0
 ; Author: KamilGolis
 ; Description: Combines vim-style navigation with PaperWM tiling window manager
 ; License: MIT
@@ -454,6 +454,7 @@ BuildHelpText(currentMode) {
         "  h / l                   Choose left / right cell",
         "  k / j                   Choose up / down cell",
         "  one x key + one y key   Move pointer; repeat to refine",
+        "  Space / r               Left / right click; reset grid",
         "  Backspace               Undo one grid level",
         "  Esc                     Exit to Normal",
         "",
@@ -587,11 +588,42 @@ TargetKeyDown(ih, vk, sc) {
         case 0x1B: ExitTargeting(1)          ; Esc
         case 0x08: UndoTargetLevel()          ; Backspace
         case 0x70: PauseTargetingForHelp()    ; F1
+        case 0x20: TargetClick("left")        ; Space
+        case 0x52: TargetClick("right")       ; r
         case 0x48: HandleTargetAxis("x", 0)   ; h
         case 0x4C: HandleTargetAxis("x", 1)   ; l
         case 0x4B: HandleTargetAxis("y", 0)   ; k
         case 0x4A: HandleTargetAxis("y", 1)   ; j
     }
+}
+
+; Click at the current pointer, then reset the grid without moving it.
+; @param button - "left" or "right"
+TargetClick(button) {
+    if (button = "left") {
+        DllCall("mouse_event", "UInt", 0x0002, "UInt", 0, "UInt", 0, "UInt", 0, "UPtr", 0) ; LEFTDOWN
+        DllCall("mouse_event", "UInt", 0x0004, "UInt", 0, "UInt", 0, "UInt", 0, "UPtr", 0) ; LEFTUP
+    } else {
+        DllCall("mouse_event", "UInt", 0x0008, "UInt", 0, "UInt", 0, "UInt", 0, "UPtr", 0) ; RIGHTDOWN
+        DllCall("mouse_event", "UInt", 0x0010, "UInt", 0, "UInt", 0, "UInt", 0, "UPtr", 0) ; RIGHTUP
+    }
+    ResetTargetingGrid()
+}
+
+; Return the grid to the full target monitor. The pointer must not move.
+ResetTargetingGrid() {
+    global TargetMonL, TargetMonT, TargetMonR, TargetMonB
+    global TargetL, TargetT, TargetR, TargetB
+    global TargetHistory, TargetPendingAxis, TargetPendingValue
+
+    TargetL := TargetMonL
+    TargetT := TargetMonT
+    TargetR := TargetMonR
+    TargetB := TargetMonB
+    TargetHistory := []
+    TargetPendingAxis := ""
+    TargetPendingValue := 0
+    DrawTargetGrid()
 }
 
 ; Accept one axis key. Two keys from different axes complete a step; pressing

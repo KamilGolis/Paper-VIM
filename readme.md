@@ -308,6 +308,8 @@ into the document.
 | **m** | Enter Targeting on the monitor under the pointer |
 | **h / l** | Choose the left / right cell |
 | **k / j** | Choose the up / down cell |
+| **Space** | Left click at the pointer; reset the grid to the first level |
+| **r** | Right click at the pointer; reset the grid to the first level |
 | **Backspace** | Undo one grid level and return to its center |
 | **Esc** | Exit Targeting and return to Normal |
 | **CapsLock** | Turn Vim off |
@@ -320,8 +322,9 @@ cell is split into another 2x2 grid. Repeat to refine. Previous grid outlines
 remain faintly visible.
 
 The grid stops splitting below `TargetMinCellSize` (8 px by default). The dark
-overlay is click-through and does not take mouse focus. It moves the pointer
-only; `Space` is reserved for a future click action.
+overlay is click-through and does not take mouse focus. `Space` left-clicks and
+`r` right-clicks at the current pointer; after either click the grid returns to
+the first 2x2 level without moving the pointer.
 
 ### Command Mode (Normal Mode Only)
 | Command | Action |
