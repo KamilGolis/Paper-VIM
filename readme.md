@@ -23,6 +23,7 @@ This script was born out of necessity. Unable to use Linux with my preferred set
 - **Script Suspension**: Pause all window management with state preservation
 - **HUD Indicators**: Visual feedback for current mode, desktop, and suspension state
 - **Active Window Border**: A click-through cyan outline marks the active managed window
+- **Targeting Mode**: Press `m` in Normal to move the pointer with a recursive 2x2 keyboard grid
 - **Fully Customizable**: UI colors and fonts, plus the main timing values, are configurable
 
 ## 📋 Requirements
@@ -46,8 +47,9 @@ This script was born out of necessity. Unable to use Linux with my preferred set
 - **CapsLock**: Toggle Vim mode on/off from any active mode
   - When **suspended**: Resume script and enter Normal mode
 - When **OFF**: Your keyboard works normally
-- When **ON**: Vim keybindings are active; the HUD shows NORMAL, VISUAL, or INSERT
+- When **ON**: Vim keybindings are active; the HUD shows NORMAL, VISUAL, INSERT, or TARGET
 - **F1**: Toggle the combined keybind reference
+- **m** (Normal): Enter Targeting; type one horizontal and one vertical key to move the pointer; Esc exits
 
 ### Window Navigation
 - **n**: Next window in stack
@@ -211,18 +213,20 @@ after such a crash.
 ### Mode System
 - **CapsLock**: Toggle Vim mode ON/OFF from any active mode
 - **v**: Switch between Normal (green) and Visual (red) mode
+- **m**: Enter Targeting (magenta) from Normal
 - **i**: Enter Insert (blue) at the cursor
-- **Esc**: Return to Normal from Insert or Visual; does nothing in Normal
+- **Esc**: Return to Normal from Insert, Visual, or Targeting; does nothing in Normal
 - **F1**: Toggle the combined keybind reference
 - **Insert**: Keys type normally; Esc returns to Normal, CapsLock turns Vim off, and F1 toggles help
 - The Vim mode is global, not per window
 
 ### Help Overlay
-Press **F1** in Normal, Visual, or Insert mode to toggle a combined keybind
-reference. It shows Normal, Visual, and Insert sections in one window, with the
-current mode marked by `<< current`. Press **F1** or **Esc** to close it. This
-is a static information window, not a which-key menu; other keys are ignored
-while it is open. F1 is not bound when Vim mode is off.
+Press **F1** in Normal, Visual, Insert, or Targeting mode to toggle a combined
+keybind reference. It shows Normal, Visual, Insert, and Targeting sections in
+one window, with the current mode marked by `<< current`. Press **F1** or
+**Esc** to close it. Closing help from Targeting returns to the same grid and
+pointer position. This is a static information window, not a which-key menu;
+other keys are ignored while it is open. F1 is not bound when Vim mode is off.
 
 ### Basic Navigation (Normal Mode)
 | Key | Action |
@@ -298,6 +302,30 @@ Unsupported in Visual mode: `V` (linewise), `Ctrl+V` (blockwise), `a`, `A`,
 `;` and `:` keys. These keys are swallowed in Visual mode so they do not type
 into the document.
 
+### Targeting Mode (Normal Mode Only)
+| Key | Action |
+|-----|--------|
+| **m** | Enter Targeting on the monitor under the pointer |
+| **h / l** | Choose the left / right cell |
+| **k / j** | Choose the up / down cell |
+| **Space** | Left click at the pointer; reset the grid to the first level |
+| **r** | Right click at the pointer; reset the grid to the first level |
+| **Backspace** | Undo one grid level and return to its center |
+| **Esc** | Exit Targeting and return to Normal |
+| **CapsLock** | Turn Vim off |
+| **F1** | Toggle help; closing help returns to Targeting |
+
+The grid covers the full monitor, including the taskbar. Each cell shows its
+complete key pair, such as `h k`, `l k`, `h j`, or `l j`. Press the two letters
+in either order. The pointer moves to the center of the selected cell, and that
+cell is split into another 2x2 grid. Repeat to refine. Previous grid outlines
+remain faintly visible.
+
+The grid stops splitting below `TargetMinCellSize` (8 px by default). The dark
+overlay is click-through and does not take mouse focus. `Space` left-clicks and
+`r` right-clicks at the current pointer; after either click the grid returns to
+the first 2x2 level without moving the pointer.
+
 ### Command Mode (Normal Mode Only)
 | Command | Action |
 |---------|--------|
@@ -337,6 +365,7 @@ and a hidden target shows "WINDOW X NOT AVAILABLE".
 - **Green "VIM: NORMAL"**: Normal mode active
 - **Red "VIM: VISUAL"**: Visual selection mode active
 - **Blue "VIM: INSERT"**: Insert mode active
+- **Magenta "VIM: TARGET"**: Targeting mode active
 - **Orange "SUSPENDED"**: Script is suspended (all actions paused)
 - **Hidden**: Vim mode off (normal typing)
 - **Yellow Flash**: Shows temporary messages (e.g., "DESKTOP 2", "WINDOW 3")
@@ -386,11 +415,12 @@ and a hidden target shows "WINDOW X NOT AVAILABLE".
   on other desktops. There is no separate per-desktop stack.
 
 ### Vim Mode
-- CapsLock toggles a global `VimMode` variable (0=off, 1=normal, 2=visual, 3=insert)
+- CapsLock toggles a global `VimMode` variable (0=off, 1=normal, 2=visual, 3=insert, 4=targeting)
 - Vim command hotkeys use `#HotIf VimMode == 1 || VimMode == 2`
 - Insert mode intercepts Esc, CapsLock, and F1; all other keys pass through
 - Visual mode adds Shift to navigation keys for text selection
-- Layout hotkeys are disabled in Insert mode
+- Targeting mode uses an `InputHook` to capture keys while the grid is active; the hook blocks keys from reaching the application
+- Layout hotkeys are disabled in Insert and Targeting modes
 
 ---
 
@@ -435,6 +465,7 @@ Global DockBackgroundColor := "1a1a1a"       ; Dock background (darker gray)
 Global NormalModeColor := "c00FF00"          ; Normal mode text color (green)
 Global VisualModeColor := "cFF0000"          ; Visual mode text color (red)
 Global InsertModeColor := "c00BFFF"          ; Insert mode text color (blue)
+Global TargetingModeColor := "cFF00FF"       ; Targeting mode text color (magenta)
 Global FlashMsgColor := "cFFFF00"            ; Flash message color (yellow)
 Global SuspendedModeColor := "cFF8800"       ; Suspended mode text color (orange)
 Global ActiveIndicatorColor := "00FF00"      ; Dock active window underline (green)
@@ -477,6 +508,13 @@ Global FocusBorderEnabled := true            ; Draw a focus border around the ac
 Global FocusBorderColor := "00A8FF"          ; Focus border color (cyan)
 Global FocusBorderThickness := 3             ; Border thickness in physical pixels
 Global FocusBorderUpdateInterval := 50       ; Move/resize tracking interval (ms)
+```
+
+### Targeting Configuration
+
+```ahk
+Global TargetingModeColor := "cFF00FF"       ; Target mode HUD text color
+Global TargetMinCellSize := 8                ; Stop splitting below this cell size (px)
 ```
 
 ### Timing Configuration
