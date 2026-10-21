@@ -1,6 +1,6 @@
 ; ==============================================================================
 ; Paper-VIM: Vim Keybindings + PaperWM Window Manager
-; Version: 1.4.1
+; Version: 1.4.2
 ; Author: KamilGolis
 ; Description: Combines vim-style navigation with PaperWM tiling window manager
 ; License: MIT
@@ -233,7 +233,7 @@ loop 4 {
     TargetCellCtrls.Push(TargetCellCtrl)
 }
 Loop 4 {
-    TargetCellLabel := TargetGridGui.Add("Text", "x0 y0 w1 h1 Center +BackgroundTrans", "")
+    TargetCellLabel := TargetGridGui.Add("Text", "x0 y0 w1 h1 +0x200 Center +BackgroundTrans", "")
     TargetCellLabels.Push(TargetCellLabel)
 }
 
@@ -693,7 +693,8 @@ DrawTargetGrid() {
     activeW := TargetR - TargetL
     activeH := TargetB - TargetT
     labelSize := Min(22, Max(7, Floor(Min(activeW, activeH) / 4)))
-    labelHeight := Max(38, labelSize + 16)
+    ; Keep enough vertical room for the full glyph box at high DPI.
+    labelHeight := Max(52, labelSize * 2 + 8)
 
     ; Each cell carries its complete x/y key pair, centered inside the cell.
     cellLabels := ["h k", "l k", "h j", "l j"]
