@@ -10,8 +10,12 @@ This script was born out of necessity. Unable to use Linux with my preferred set
 
 - **Vim Mode Integration**: System-wide vim keybindings for text editing and navigation
 - **PaperWM-Style Window Management**: Automatic horizontal scrolling window layout
-- **Dynamic Height Adjustment**: Windows auto-resize based on taskbar visibility
+- **Per-Window Width Presets**: Shrink the active window to 25%, 50%, or 75%, or restore the 85% focus layout with neighbour peeks
+- **Niri-Style Focus Scrolling**: `n`/`Tab` scroll the row only as far as needed, so the focused window parks at the left or right edge
+- **Center Window**: Center the active window on demand with `Ctrl+Shift+C`
+- **Dynamic Work Area**: Windows respect the taskbar edge and size, including left, right, top, and bottom docks
 - **Taskbar Toggle**: Hide/show Windows taskbar with automatic window reflow
+- **Taskbar Auto-Detection**: Reads the taskbar rect with `SHAppBarMessage`; `TaskbarMode`/`TaskbarSize` are manual overrides
 - **Visual Window Dock**: Live icon preview showing your window stack position with numbered indicators
 - **Direct Window Navigation**: Jump to any window by pressing its number (1-9)
 - **Multi-Desktop Support**: Automatic window arrangement across virtual desktops
@@ -38,10 +42,11 @@ This script was born out of necessity. Unable to use Linux with my preferred set
 ## 🎮 Quick Start Guide
 
 ### Toggle Vim Mode
-- **CapsLock**: Toggle between Normal mode and Off
+- **CapsLock**: Toggle Vim mode on/off from any active mode
   - When **suspended**: Resume script and enter Normal mode
 - When **OFF**: Your keyboard works normally
-- When **ON**: Vim keybindings are active (green HUD shown)
+- When **ON**: Vim keybindings are active; the HUD shows NORMAL, VISUAL, or INSERT
+- **F1**: Toggle the combined keybind reference
 
 ### Window Navigation
 - **n**: Next window in stack
@@ -51,8 +56,11 @@ This script was born out of necessity. Unable to use Linux with my preferred set
 - **Ctrl+Q**: Suspend/resume script (preserves window state)
 - **Ctrl+T**: Toggle taskbar visibility (windows auto-resize)
 - **Ctrl+F**: Toggle overlay mode (fullscreen stacked windows)
+- **Ctrl+Shift+1/2/3**: Set the active window width to 25%, 50%, or 75%
+- **Ctrl+Shift+0**: Restore the active window to full width
+- **Ctrl+Shift+C**: Center the active window
 
-The active window automatically centers on screen with a scrolling effect!
+The window row scrolls horizontally. Full-width windows use a focus layout: 85% of the viewport, the same small gutter as tiled windows, and the rest shows a slice of the previous and next window. Press `Ctrl+Shift+C` to center the active window.
 
 ---
 
@@ -62,9 +70,29 @@ The active window automatically centers on screen with a scrolling effect!
 
 ### Automatic Layout
 - All windows are automatically arranged in a horizontal scrollable stack
-- Each window takes 95% of screen width with small gaps
-- Windows scroll horizontally as you navigate
-- Active window is always centered
+- Each window remembers its own width: 25%, 50%, 75%, or full
+- 25/50/75 widths are fractions of the usable work area and account for the gaps,
+  so four 25% windows or two 50% windows tile the work area exactly
+- The view scrolls horizontally as you navigate, niri-style: a window that is
+  already visible does not move; an off-screen window is scrolled to the left
+  or right edge
+- **Full width is the focus layout**: the active window is 85% of the viewport.
+  The gutters use the same `Gap` (8 px) as the tiled presets, and the remaining
+  space shows a slice of the previous and next window
+
+### Window Width
+- **Ctrl+Shift+1**: 25% width
+- **Ctrl+Shift+2**: 50% width
+- **Ctrl+Shift+3**: 75% width
+- **Ctrl+Shift+0**: Full width (focus layout with peeks)
+- **Ctrl+Shift+C**: Center the active window
+
+Each window keeps its width when you navigate, cycle, or reorder the stack.
+The width is stored per window handle, so moving a window with `Ctrl+H`/`Ctrl+L`
+moves its size with it.
+
+Full-width windows stay centered so both peeks remain visible while you navigate.
+The 25/50/75 presets use niri-style edge scrolling.
 
 ### Stack Operations
 - **n**: Cycle to next window (right)
@@ -145,14 +173,38 @@ When you resume the script:
 - **Presentations**: Quickly disable window management
 - **Quick break**: Pause without losing your window arrangement
 
+### Emergency Layout on Error
+If the script hits an unhandled error, it moves every managed window to the
+same reachable rectangle near the top-left of the work area (up to 1200x800
+px; controlled by `EmergencyMargin`, `EmergencyMinWidth`/`Height`, and
+`EmergencyMaxWidth`/`Height`), hides the HUD and dock, and freezes reflow. It
+then shows the normal AutoHotkey error dialog. This keeps windows reachable
+even if the script stops. Emergency mode is terminal: CapsLock and Ctrl+Q do
+not resume it. Restart the script to restore tiling.
+
+This guard covers unhandled AutoHotkey errors and error exits. A forced
+process kill or native crash cannot run in-process code; restart the script
+after such a crash.
+
 ---
 
 ## ⌨️ Vim Text Navigation & Editing
 
 ### Mode System
-- **CapsLock**: Toggle Normal mode ON/OFF
+- **CapsLock**: Toggle Vim mode ON/OFF from any active mode
 - **v**: Switch between Normal (green) and Visual (red) mode
-- **i** or **Esc**: Exit to normal typing (mode OFF)
+- **i**: Enter Insert (blue) at the cursor
+- **Esc**: Return to Normal from Insert or Visual; does nothing in Normal
+- **F1**: Toggle the combined keybind reference
+- **Insert**: Keys type normally; Esc returns to Normal, CapsLock turns Vim off, and F1 toggles help
+- The Vim mode is global, not per window
+
+### Help Overlay
+Press **F1** in Normal, Visual, or Insert mode to toggle a combined keybind
+reference. It shows Normal, Visual, and Insert sections in one window, with the
+current mode marked by `<< current`. Press **F1** or **Esc** to close it. This
+is a static information window, not a which-key menu; other keys are ignored
+while it is open. F1 is not bound when Vim mode is off.
 
 ### Basic Navigation (Normal Mode)
 | Key | Action |
@@ -185,15 +237,15 @@ When you resume the script:
 ### Editing Commands (Normal Mode)
 | Key | Action |
 |-----|--------|
-| **i** | Enter insert mode (exit vim) |
-| **a** | Append (move right, then insert) |
-| **A** (Shift+a) | Append at end of line |
-| **o** | Open new line below, insert |
-| **O** (Shift+o) | Open new line above, insert |
+| **i** | Enter Insert at the cursor |
+| **a** | Append after the cursor, then Insert |
+| **A** (Shift+a) | Append at end of line, then Insert |
+| **o** | Open new line below, then Insert |
+| **O** (Shift+o) | Open new line above, then Insert |
 | **x** | Delete character |
 | **dd** | Delete entire line |
-| **cc** | Change line (delete + insert) |
-| **cw** | Change word |
+| **cc** | Change line (delete, then Insert) |
+| **cw** | Change word (delete, then Insert) |
 | **u** | Undo |
 | **Ctrl+R** | Redo |
 
@@ -212,16 +264,31 @@ When you resume the script:
 | **Ctrl+D/U** | Page down/up while selecting |
 | **y** | Yank (copy) selection |
 | **d** | Delete selection |
-| **c** | Change selection (delete + insert) |
+| **c** | Change selection (delete, then Insert) |
 | **x** | Delete selection |
+| **p** | Paste over the selection (Windows clipboard) |
+| **gg** | Extend selection to document start |
+| **G** | Extend selection to document end |
+| **Esc** | Return to Normal |
 
-### Command Mode
+Unsupported in Visual mode: `V` (linewise), `Ctrl+V` (blockwise), `a`, `A`,
+`o`, `O`, `>`, `<`, the Normal-only find commands (`f`, `t`, `/`), and the
+`;` and `:` keys. These keys are swallowed in Visual mode so they do not type
+into the document.
+
+### Command Mode (Normal Mode Only)
 | Command | Action |
 |---------|--------|
 | **:** | Open command prompt |
 | **:w** | Save file (Ctrl+S) |
 | **:q** | Quit/close (Alt+F4) |
 | **:wq** | Save and quit |
+| **;** | Swallowed in Normal and Visual mode |
+
+The command box accepts an optional leading `:` and is case-insensitive.
+It restores focus to the window that was active before the box opened. These
+are application shortcuts, not Vim commands: in a browser, `:w` opens
+"Save Page" and `:q` closes the whole browser window.
 
 ### Window Navigation by Number (Normal Mode Only)
 | Key | Action |
@@ -245,9 +312,12 @@ When you resume the script:
 ### Mode HUD (Top-Right)
 - **Green "VIM: NORMAL"**: Normal mode active
 - **Red "VIM: VISUAL"**: Visual selection mode active
+- **Blue "VIM: INSERT"**: Insert mode active
 - **Orange "SUSPENDED"**: Script is suspended (all actions paused)
 - **Hidden**: Vim mode off (normal typing)
 - **Yellow Flash**: Shows temporary messages (e.g., "DESKTOP 2", "WINDOW 3")
+- **Anchored to the work area**: The HUD measures its real auto-sized width and
+  positions itself from the top-right corner, so the text stays fully on screen
 
 ### Window Dock (Top-Center)
 - **Always visible** when windows are managed (hidden when suspended)
@@ -256,6 +326,7 @@ When you resume the script:
 - **Window numbers**: Below each icon showing stack position
 - **Active window number**: Bright green
 - **Inactive window numbers**: Gray
+- **Centered on the work area**: The dock measures its real auto-sized width
 - **Updates automatically** when navigating/closing windows
 
 ---
@@ -266,16 +337,21 @@ When you resume the script:
 1. On startup, all existing windows with title bars are added to the stack
 2. New windows are automatically detected and added via Windows Shell Hook
 3. Closed windows are automatically removed
-4. Windows are positioned based on their position relative to the active window
-5. **Taskbar click support**: Clicking a window in the taskbar properly activates and focuses it
-6. **Suspension handling**: When suspended, all window events are ignored and state is preserved
+4. Windows are laid out left to right in stack order, each with its remembered width
+5. The view offset scrolls only when the focused window would leave the screen,
+   matching niri's `center-focused-column "never"` behavior
+6. **Taskbar click support**: Clicking a window in the taskbar properly activates and focuses it
+7. **Suspension handling**: When suspended, all window events are ignored and state is preserved
 
-### Dynamic Height Calculation
-- Window height automatically adjusts based on taskbar visibility
-- When taskbar is **hidden** (Ctrl+T): Windows gain additional height equal to taskbar height
-- When taskbar is **visible**: Windows account for taskbar space at bottom
-- **Overlay Mode**: Maximizes height with small gaps (top gap, and bottom gap that includes taskbar when visible)
-- All windows automatically reflow when taskbar visibility changes
+### Dynamic Work Area
+- The script detects the taskbar edge and size with `SHAppBarMessage(ABM_GETTASKBARPOS)`
+- A left or right taskbar shifts the window origin and reduces the usable width
+- A top or bottom taskbar reduces the usable height on that side
+- The HUD and dock are positioned inside the usable area, so they do not sit behind the taskbar
+- The top `BarHeight` strip is reserved for the HUD and dock; the bottom margin is only `Gap`
+- When the taskbar is hidden (Ctrl+T): windows use the full screen again
+- **Overlay Mode**: Fills the usable area with one gap on each edge
+- All windows automatically reflow when the taskbar moves or its visibility changes
 
 ### Desktop Awareness
 - Uses a Map to track which desktops have been initialized
@@ -284,10 +360,11 @@ When you resume the script:
 - Each desktop maintains its own window arrangement
 
 ### Vim Mode
-- CapsLock toggles a global `Mode` variable (0=off, 1=normal, 2=visual)
-- Conditional hotkeys (`#HotIf Mode > 0`) activate vim bindings
+- CapsLock toggles a global `VimMode` variable (0=off, 1=normal, 2=visual, 3=insert)
+- Vim command hotkeys use `#HotIf VimMode == 1 || VimMode == 2`
+- Insert mode intercepts Esc, CapsLock, and F1; all other keys pass through
 - Visual mode adds Shift to navigation keys for text selection
-- Normal mode allows quick editing without entering insert mode
+- Layout hotkeys are disabled in Insert mode
 
 ---
 
@@ -298,10 +375,30 @@ All configuration variables are defined at the top of `paper-vim.ahk`. You can c
 ### Window Layout Configuration
 
 ```ahk
-Global TargetWidth := A_ScreenWidth * 0.95  ; Window width (95% of screen)
-Global Gap := 8                              ; Gap between windows and screen edges
-Global BarHeight := 60                       ; Reserved space at top for HUD and dock
-Global TaskbarHeight := 48                   ; Windows taskbar height (for calculations)
+Global FullWidthRatio := 1.0                 ; "Full" preset; selects focus/peek mode
+Global FocusWidthRatio := 0.85               ; Focus-mode window width
+Global WindowWidths := Map()                 ; Per-window width ratios (remembered at runtime)
+Global Gap := 8                              ; Gap between windows and work-area edges
+Global BarHeight := 60                       ; Top strip reserved for the HUD and dock
+Global TaskbarMode := "auto"                 ; auto, left, top, right, bottom, or none
+Global TaskbarSize := 0                      ; Fixed taskbar size in px (0 = 48); used with a fixed mode
+```
+
+Width presets are `0.25`, `0.50`, and `0.75` of the usable work area. The pixel
+width is computed as `workWidth * ratio - Gap * (1 + ratio)`, which incorporates
+the gaps so the presets tile evenly.
+
+The full preset is different: it uses `FocusWidthRatio` (85% by default) and the
+same `Gap` for its gutters as the tiled presets. The remaining space is the
+visible slice of the previous and next window. On a 3840 px screen this leaves
+about 7.3% of each neighbour visible.
+
+`TaskbarMode := "auto"` reads the taskbar position from Windows. If detection
+fails on your setup, set a fixed edge and size, for example:
+
+```ahk
+Global TaskbarMode := "left"
+Global TaskbarSize := 72
 ```
 
 ### Visual Customization - Colors
@@ -311,6 +408,7 @@ Global HUDBackgroundColor := "121212"        ; VIM HUD background (dark gray)
 Global DockBackgroundColor := "1a1a1a"       ; Dock background (darker gray)
 Global NormalModeColor := "c00FF00"          ; Normal mode text color (green)
 Global VisualModeColor := "cFF0000"          ; Visual mode text color (red)
+Global InsertModeColor := "c00BFFF"          ; Insert mode text color (blue)
 Global FlashMsgColor := "cFFFF00"            ; Flash message color (yellow)
 Global SuspendedModeColor := "cFF8800"       ; Suspended mode text color (orange)
 Global ActiveIndicatorColor := "00FF00"      ; Dock active window underline (green)
@@ -335,15 +433,15 @@ Global DockLeftCount := 2                    ; Number of icons shown left of act
 Global DockRightCount := 2                   ; Number of icons shown right of active
 Global DockMarginX := 12                     ; Dock horizontal margin
 Global DockMarginY := 8                      ; Dock vertical margin
-Global DockPosY := 10                        ; Dock Y position from top
+Global DockPosY := 10                        ; Dock Y position from the top of the work area
 ```
 
 ### HUD Configuration
 
 ```ahk
-Global HUDPosX := A_ScreenWidth - 240        ; HUD X position from left
-Global HUDPosY := 40                         ; HUD Y position from top
-Global HUDWidth := 220                       ; HUD width in pixels
+Global HUDMarginRight := 20                  ; HUD distance from the right edge of the work area
+Global HUDPosY := 40                         ; HUD Y position from the top of the work area
+Global HUDWidth := 220                       ; HUD text control width; window auto-sizes
 ```
 
 ### Timing Configuration
@@ -371,6 +469,12 @@ Global TitleBarMask := 0x00C00000            ; Window style mask for title bar d
 - Press **z** to manually trigger reflow
 - Ensure windows have title bars (minimalist apps may not be detected)
 
+### Windows overlap the taskbar
+- The script auto-detects the taskbar edge and size. If your taskbar is unusual,
+  set `TaskbarMode` to `"left"`, `"top"`, `"right"`, or `"bottom"` and set
+  `TaskbarSize` to the taskbar width or height in pixels
+- Use `TaskbarMode := "none"` to let windows use the whole screen
+
 ### Some windows don't work correctly
 - **System windows** like Task Manager, Windows Settings, and some OS dialogs may not respond to window management commands
 - These windows often have special protections that prevent automated positioning
@@ -388,7 +492,8 @@ If the dock shows blank spaces or default icons instead of app icons:
 
 ### Vim mode stuck on
 - Press **CapsLock** to toggle off
-- Press **i** or **Esc** as backup
+- Press **Esc** to return to Normal from Insert or Visual
+- If the HUD is hidden, Vim mode is off; press **CapsLock** to enter Normal
 
 ### Script suspended and won't respond to hotkeys
 - Press **CapsLock** to resume and enter Normal mode
@@ -409,9 +514,11 @@ If the dock shows blank spaces or default icons instead of app icons:
 4. **Combine modes**: Navigate with `hjkl`, select with `v`, edit normally
 5. **Desktop workflow**: Organize projects across virtual desktops
 6. **Stack reordering**: Use Ctrl+H/L to arrange windows by priority
-7. **Maximize screen space**: Use Ctrl+T to hide taskbar and Ctrl+F for overlay mode for distraction-free work
-8. **Suspend when needed**: Use Ctrl+Q to temporarily disable tiling, then resume quickly with CapsLock
-9. **Taskbar integration**: Click windows in taskbar to activate them - the script properly handles focus
+7. **Build columns**: Use Ctrl+Shift+1/2/3 to make the active window 25%, 50%, or 75% wide; two 50% windows or four 25% windows fit side by side
+8. **Center when needed**: Press Ctrl+Shift+C to center the active window after resizing or navigating
+9. **Maximize screen space**: Use Ctrl+T to hide taskbar and Ctrl+F for overlay mode for distraction-free work
+10. **Suspend when needed**: Use Ctrl+Q to temporarily disable tiling, then resume quickly with CapsLock
+11. **Taskbar integration**: Click windows in taskbar to activate them - the script properly handles focus
 
 ---
 
