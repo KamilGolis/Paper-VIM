@@ -1,6 +1,6 @@
 ; ==============================================================================
 ; Paper-VIM: Vim Keybindings + PaperWM Window Manager
-; Version: 1.5.0
+; Version: 1.5.1
 ; Author: KamilGolis
 ; Description: Combines vim-style navigation with PaperWM tiling window manager
 ; License: MIT
@@ -126,6 +126,17 @@ global DockRightCount := 2            ; Number of icons shown right of active
 global DockMarginX := 12              ; Dock horizontal margin
 global DockMarginY := 8               ; Dock vertical margin
 global DockPosY := 10                 ; Dock Y position from top
+global DockNumberHeight := 16         ; Height of the number labels
+global DockSlotCount := DockLeftCount + 1 + DockRightCount
+global DockSlotPics := []             ; Persistent Picture controls
+global DockNumberCtrls := []          ; Persistent number label controls
+global DockSlotHwnds := []            ; Window handle currently shown in each slot
+global DockActiveUnderline := 0       ; Persistent active-slot underline
+global DockWidth := 0                 ; Cached auto-sized dock width
+global DockHeight := 0                ; Cached auto-sized dock height
+global DockShown := false             ; Dock window is currently visible
+global DockShownX := 0                ; Last shown position
+global DockShownY := 0
 
 ; --- HUD Configuration ---
 global HUDMarginRight := 20           ; HUD distance from the right edge of the work area
@@ -179,6 +190,30 @@ DockGui.BackColor := DockBackgroundColor
 WinSetTransColor(DockBackgroundColor, DockGui)
 DockGui.MarginX := DockMarginX
 DockGui.MarginY := DockMarginY
+DockGui.SetFont(DockNumberFontSize " " DockInactiveNumberColor, FontFamily)
+
+; Create fixed dock slots once. UpdateDock only changes their images, numbers,
+; and positions; rebuilding the GUI caused visible flicker on every reflow.
+loop DockSlotCount {
+    slotX := (A_Index - 1) * (DockIconSize + DockIconSpacing)
+    DockSlotPic := DockGui.Add("Picture", "x" slotX " y0 w" DockIconSize " h" DockIconSize, A_WinDir "\System32\shell32.dll")
+    DockSlotPics.Push(DockSlotPic)
+    DockNumberCtrl := DockGui.Add("Text", "x" slotX " y" (DockIconSize + 4) " w" DockIconSize " h" DockNumberHeight " Center", "")
+    DockNumberCtrls.Push(DockNumberCtrl)
+}
+DockActiveUnderline := DockGui.Add("Text", "x0 y" (DockIconSize + 2) " w" DockIconSize " h2 Background" ActiveIndicatorColor, "")
+
+; Measure the fixed dock once while hidden. Its width does not change because
+; the number of slots is fixed.
+DockGui.Show("Hide")
+WinGetPos(&dockMeasuredX, &dockMeasuredY, &DockWidth, &DockHeight, DockGui.Hwnd)
+if (DockWidth <= 1)
+    DockWidth := DockMarginX * 2 + DockSlotCount * DockIconSize + (DockSlotCount - 1) * DockIconSpacing
+if (DockHeight <= 1)
+    DockHeight := DockMarginY * 2 + DockIconSize + 4 + DockNumberHeight
+DockGui.Hide()
+loop DockSlotCount
+    DockSlotHwnds.Push(0)
 
 ; Keybind help overlay (hidden until F1 is pressed)
 HelpGui := Gui("+AlwaysOnTop -Caption +ToolWindow +Border")
@@ -819,7 +854,7 @@ ResumeTargetingAfterHelp() {
 ; When suspended, all window management actions are paused
 ; Resume by pressing Ctrl+Q again or CapsLock to enter Vim mode
 ToggleSuspend() {
-    global Suspended, SuspendedState, OverlayMode, WindowStack, EmergencyMode
+    global Suspended, SuspendedState, OverlayMode, WindowStack, EmergencyMode, DockShown
 
     ; Emergency mode is terminal for this session; restart to resume.
     if (EmergencyMode)
@@ -868,6 +903,7 @@ ToggleSuspend() {
         catch as err {
             ; Ignore if dock doesn't exist
         }
+        DockShown := false
     } else {
         ; === RESUMING ===
         Suspended := false
@@ -904,6 +940,11 @@ ToggleSuspend() {
 ; Shows icons for windows around the active window with visual indicator
 UpdateDock() {
     global WindowStack, DockGui
+    global DockSlotPics, DockNumberCtrls, DockActiveUnderline, DockSlotHwnds, DockSlotCount
+    global DockWidth, DockHeight, DockShown, DockShownX, DockShownY
+    global DockIconSize, DockIconSpacing, DockLeftCount, DockRightCount, DockNumberHeight
+    global DockMarginX, DockMarginY, WorkLeft, WorkTop, WorkWidth, DockPosY
+    global ActiveIndicatorColor, DockInactiveNumberColor, DockNumberFontSize, FontFamily
 
     ; Keep the dock centered inside the usable area when the taskbar moves
     RefreshWorkArea()
@@ -911,32 +952,19 @@ UpdateDock() {
     ; No managed windows: hide the dock
     if (WindowStack.Length == 0) {
         try DockGui.Hide()
-        catch as err {
-            ; Ignore hide errors
-        }
+        DockShown := false
+        DockSlotHwnds := []
+        loop DockSlotCount
+            DockSlotHwnds.Push(0)
         return
     }
 
     ; Get active window
     activeIndex := GetStackIndex(WinActive("A"))
 
-    ; Active window is not managed: keep the dock as it is instead of
-    ; rebuilding a GUI that would never be shown
-    if (activeIndex == 0) {
+    ; Active window is not managed: keep the dock as it is
+    if (activeIndex == 0)
         return
-    }
-
-    ; Destroy entire GUI and recreate to avoid duplicates
-    try DockGui.Destroy()
-    catch as err {
-        ; Ignore destroy errors
-    }
-    
-    DockGui := Gui("+AlwaysOnTop -Caption +ToolWindow +LastFound")
-    DockGui.BackColor := DockBackgroundColor
-    WinSetTransColor(DockBackgroundColor, DockGui)
-    DockGui.MarginX := DockMarginX
-    DockGui.MarginY := DockMarginY
 
     ; Helper function to wrap index for circular navigation
     WrapIndex(idx) {
@@ -947,68 +975,52 @@ UpdateDock() {
         return idx
     }
 
-    ; Build the dock from left to right
+    ; Build the five visible slot indices: left, active, right.
+    indices := []
+    loop DockLeftCount
+        indices.Push(WrapIndex(activeIndex - DockLeftCount + A_Index - 1))
+    indices.Push(activeIndex)
+    loop DockRightCount
+        indices.Push(WrapIndex(activeIndex + A_Index))
+
     xPos := 0
-    numberYPos := DockIconSize + 4  ; Position for number labels below icons
+    for slot, idx in indices {
+        hwnd := WindowStack[idx]
 
-    ; Add left icons (previous windows, in correct order)
-    leftIndices := []
-    loop DockLeftCount {
-        idx := WrapIndex(activeIndex - DockLeftCount + A_Index - 1)
-        leftIndices.Push(idx)
-    }
-
-    for idx in leftIndices {
-        try {
-            iconPath := GetWindowIconPath(WindowStack[idx])
-            DockGui.Add("Picture", "x" xPos " y0 w" DockIconSize " h" DockIconSize, iconPath)
-            ; Add number label below icon
-            DockGui.SetFont(DockNumberFontSize " " DockInactiveNumberColor, FontFamily)
-            DockGui.Add("Text", "x" xPos " y" numberYPos " w" DockIconSize " Center", idx)
-            xPos += DockIconSize + DockIconSpacing
+        ; Only replace the icon when this slot changes windows. This avoids
+        ; extracting and reloading every icon on every reflow.
+        if (DockSlotHwnds[slot] != hwnd) {
+            DockSlotPics[slot].Value := GetWindowIconPath(hwnd)
+            DockSlotHwnds[slot] := hwnd
         }
-        catch as err
-            ; Skip windows that fail to get icon
-            continue
-    }
+        DockSlotPics[slot].Move(xPos, 0, DockIconSize, DockIconSize)
 
-    ; Add center icon (active window) - with underline and number
-    try {
-        iconPath := GetWindowIconPath(WindowStack[activeIndex])
-        DockGui.Add("Picture", "x" xPos " y0 w" DockIconSize " h" DockIconSize, iconPath)
-        ; Add underline below active icon
-        DockGui.Add("Text", "x" xPos " y" (DockIconSize + 2) " w" DockIconSize " h2 Background" ActiveIndicatorColor)
-        ; Add number label below underline with active color
-        DockGui.SetFont(DockNumberFontSize " c" ActiveIndicatorColor, FontFamily)
-        DockGui.Add("Text", "x" xPos " y" numberYPos " w" DockIconSize " Center", activeIndex)
+        number := DockNumberCtrls[slot]
+        number.Move(xPos, DockIconSize + 4, DockIconSize, DockNumberHeight)
+        number.Value := idx
+        if (idx == activeIndex) {
+            number.SetFont(DockNumberFontSize " c" ActiveIndicatorColor, FontFamily)
+            DockActiveUnderline.Move(xPos, DockIconSize + 2, DockIconSize, 2)
+            DockActiveUnderline.Visible := true
+        } else {
+            number.SetFont(DockNumberFontSize " " DockInactiveNumberColor, FontFamily)
+        }
+
         xPos += DockIconSize + DockIconSpacing
     }
-    catch as err
-        ; Failed to add active window icon
-        return
 
-    ; Add right icons (next windows)
-    loop DockRightCount {
-        idx := WrapIndex(activeIndex + A_Index)
-        try {
-            iconPath := GetWindowIconPath(WindowStack[idx])
-            DockGui.Add("Picture", "x" xPos " y0 w" DockIconSize " h" DockIconSize, iconPath)
-            ; Add number label below icon
-            DockGui.SetFont(DockNumberFontSize " " DockInactiveNumberColor, FontFamily)
-            DockGui.Add("Text", "x" xPos " y" numberYPos " w" DockIconSize " Center", idx)
-            xPos += DockIconSize + DockIconSpacing
-        }
-        catch as err
-            ; Skip windows that fail to get icon
-            continue
+    dockX := WorkLeft + (WorkWidth - DockWidth) / 2
+    dockY := WorkTop + DockPosY
+    if (!DockShown || dockX != DockShownX || dockY != DockShownY) {
+        DockGui.Show("NA x" dockX " y" dockY " NoActivate")
+        DockShown := true
+        DockShownX := dockX
+        DockShownY := dockY
     }
 
-    ; Show hidden first so AutoSize gives the real width, then center the dock
-    DockGui.Show("Hide")
-    WinGetPos(&dx, &dy, &dockWidth, &dockHeight, DockGui.Hwnd)
-    dockX := WorkLeft + (WorkWidth - dockWidth) / 2
-    dockY := WorkTop + DockPosY
-    DockGui.Show("x" dockX " y" dockY " NoActivate")
+    ; Keep the dock above the focus-border bars. Showing the dock does not
+    ; necessarily put it above an existing topmost border bar.
+    RaiseOverlays()
 }
 
 ; Get icon path or handle for a window
@@ -1016,7 +1028,7 @@ UpdateDock() {
 ; @return Icon path or handle string
 GetWindowIconPath(hwnd) {
     if (!hwnd)
-        return "*icon1 shell32.dll"
+        return A_WinDir "\System32\shell32.dll"
     
     ; Try to get the window's icon
     ; First, try to get large icon
@@ -1069,7 +1081,7 @@ GetWindowIconPath(hwnd) {
     }
 
     ; Return default icon path if all else fails
-    return "*icon1 shell32.dll"  ; Default Windows icon
+    return A_WinDir "\System32\shell32.dll"  ; Default Windows icon
 }
 
 ; Recalculate the usable screen area from the taskbar position.
@@ -2044,7 +2056,7 @@ ToggleTaskbar() {
 ; off-screen or behind each other in an unreachable horizontal row.
 EmergencyLayout() {
     global WindowStack, WorkLeft, WorkTop, WorkWidth, WorkHeight
-    global VimGui, DockGui, HelpGui, HelpVisible
+    global VimGui, DockGui, HelpGui, HelpVisible, DockShown
     global EmergencyMargin, EmergencyMinWidth, EmergencyMinHeight
     global EmergencyMaxWidth, EmergencyMaxHeight
 
@@ -2057,6 +2069,7 @@ EmergencyLayout() {
         try VimGui.Hide()
     if (IsSet(DockGui))
         try DockGui.Hide()
+    DockShown := false
     if (IsSet(HelpGui))
         try HelpGui.Hide()
     try HideFocusBorder()
