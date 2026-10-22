@@ -24,7 +24,7 @@ This script was born out of necessity. Unable to use Linux with my preferred set
 - **HUD Indicators**: Visual feedback for current mode, desktop, and suspension state
 - **Active Window Border**: A click-through cyan outline marks the active managed window
 - **Targeting Mode**: Press `m` in Normal to move the pointer with a configurable recursive keyboard grid, one key per cell
-- **Fully Customizable**: UI colors and fonts, plus the main timing values, are configurable
+- **Fully Customizable**: UI colors, fonts, timing values, and the targeting grid size and keys are configurable
 
 ## 📋 Requirements
 

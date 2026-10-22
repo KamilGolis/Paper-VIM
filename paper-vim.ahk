@@ -491,7 +491,7 @@ BuildHelpText(currentMode) {
         "",
         targetTitle,
         "  m                       Enter Targeting (from Normal)",
-        "  " TargetKeySummary() "                   Cell keys, row by row",
+        "  " TargetKeySummary() "       Cell keys, left to right, top to bottom",
         "  " TargetGridRows " x " TargetGridCols "                     Grid size",
         "  one key                 Move pointer; repeat to refine",
         "  Space / r               Left / right click; reset grid",
