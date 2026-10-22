@@ -1,6 +1,6 @@
 ; ==============================================================================
 ; Paper-VIM: Vim Keybindings + PaperWM Window Manager
-; Version: 1.5.1
+; Version: 1.6.0
 ; Author: KamilGolis
 ; Description: Combines vim-style navigation with PaperWM tiling window manager
 ; License: MIT
@@ -72,13 +72,12 @@ global TargetT := 0
 global TargetR := 0
 global TargetB := 0
 global TargetHistory := []            ; Previous active cells, for Backspace
-global TargetPendingAxis := ""        ; First axis key typed: "x" or "y"
-global TargetPendingValue := 0        ; 0 = left/top, 1 = right/bottom
+global TargetHeldKeys := Map()        ; Held cell keys, to ignore auto-repeat
 global TargetDimGui := ""             ; Full-monitor dim layer
 global TargetAncestorGui := ""        ; Faint outlines of previous cells
 global TargetGridGui := ""            ; Current 2x2 grid labels
 global TargetCellCtrls := []          ; Four cell border controls
-global TargetCellLabels := []         ; Four cell key-pair label controls
+global TargetCellLabels := []         ; Four single-key cell label controls
 global TargetAncestorCtrls := []      ; Fixed pool of previous-outline controls
 global TargetMinCellSize := 8         ; Stop splitting below this cell size (px)
 
@@ -486,9 +485,9 @@ BuildHelpText(currentMode) {
         "",
         targetTitle,
         "  m                       Enter Targeting (from Normal)",
-        "  h / l                   Choose left / right cell",
-        "  k / j                   Choose up / down cell",
-        "  one x key + one y key   Move pointer; repeat to refine",
+        "  h / j                   Top-left / top-right cell",
+        "  k / l                   Bottom-left / bottom-right cell",
+        "  one key                 Move pointer; repeat to refine",
         "  Space / r               Left / right click; reset grid",
         "  Backspace               Undo one grid level",
         "  Esc                     Exit to Normal",
@@ -547,7 +546,6 @@ EnterTargeting() {
     global VimMode, TargetActive, TargetHelpPaused, TargetHistory
     global TargetMonL, TargetMonT, TargetMonR, TargetMonB
     global TargetL, TargetT, TargetR, TargetB
-    global TargetPendingAxis, TargetPendingValue
 
     if (VimMode != 1 || TargetActive)
         return
@@ -564,8 +562,6 @@ EnterTargeting() {
     TargetR := TargetMonR
     TargetB := TargetMonB
     TargetHistory := []
-    TargetPendingAxis := ""
-    TargetPendingValue := 0
     TargetHelpPaused := false
     TargetActive := true
 
@@ -602,22 +598,31 @@ ExitTargeting(returnMode := 1) {
 ; Capture every key while Targeting is active. The InputHook blocks keys from
 ; reaching the active application, including keys that are not grid commands.
 StartTargetHook() {
-    global TargetHook
+    global TargetHook, TargetHeldKeys
     if (TargetHook) {
         try TargetHook.Stop()
     }
 
+    TargetHeldKeys := Map()
     TargetHook := InputHook("L0")
     TargetHook.KeyOpt("{All}", "N S I")
     TargetHook.OnKeyDown := TargetKeyDown
+    TargetHook.OnKeyUp := TargetKeyUp
     TargetHook.Start()
 }
 
 ; Handle one key from the Targeting InputHook.
 TargetKeyDown(ih, vk, sc) {
-    global VimMode, TargetActive
+    global VimMode, TargetActive, TargetHeldKeys
     if (VimMode != 4 || !TargetActive)
         return
+
+    ; One key selects one cell. Ignore auto-repeat until the key is released.
+    if (vk = 0x48 || vk = 0x4A || vk = 0x4B || vk = 0x4C) {
+        if (TargetHeldKeys.Has(vk))
+            return
+        TargetHeldKeys[vk] := true
+    }
 
     switch vk {
         case 0x1B: ExitTargeting(1)          ; Esc
@@ -625,11 +630,18 @@ TargetKeyDown(ih, vk, sc) {
         case 0x70: PauseTargetingForHelp()    ; F1
         case 0x20: TargetClick("left")        ; Space
         case 0x52: TargetClick("right")       ; r
-        case 0x48: HandleTargetAxis("x", 0)   ; h
-        case 0x4C: HandleTargetAxis("x", 1)   ; l
-        case 0x4B: HandleTargetAxis("y", 0)   ; k
-        case 0x4A: HandleTargetAxis("y", 1)   ; j
+        case 0x48: ApplyTargetCell(0, 0)      ; h: top-left
+        case 0x4A: ApplyTargetCell(1, 0)      ; j: top-right
+        case 0x4B: ApplyTargetCell(0, 1)      ; k: bottom-left
+        case 0x4C: ApplyTargetCell(1, 1)      ; l: bottom-right
     }
+}
+
+; A released cell key can be used again for the next grid level.
+TargetKeyUp(ih, vk, sc) {
+    global TargetHeldKeys
+    if (TargetHeldKeys.Has(vk))
+        TargetHeldKeys.Delete(vk)
 }
 
 ; Click at the current pointer, then reset the grid without moving it.
@@ -649,38 +661,14 @@ TargetClick(button) {
 ResetTargetingGrid() {
     global TargetMonL, TargetMonT, TargetMonR, TargetMonB
     global TargetL, TargetT, TargetR, TargetB
-    global TargetHistory, TargetPendingAxis, TargetPendingValue
+    global TargetHistory
 
     TargetL := TargetMonL
     TargetT := TargetMonT
     TargetR := TargetMonR
     TargetB := TargetMonB
     TargetHistory := []
-    TargetPendingAxis := ""
-    TargetPendingValue := 0
     DrawTargetGrid()
-}
-
-; Accept one axis key. Two keys from different axes complete a step; pressing
-; the same axis again changes that axis without moving.
-HandleTargetAxis(axis, value) {
-    global TargetPendingAxis, TargetPendingValue
-
-    if (TargetPendingAxis == "") {
-        TargetPendingAxis := axis
-        TargetPendingValue := value
-        return
-    }
-
-    if (axis == TargetPendingAxis) {
-        TargetPendingValue := value
-        return
-    }
-
-    x := (axis == "x") ? value : TargetPendingValue
-    y := (axis == "y") ? value : TargetPendingValue
-    TargetPendingAxis := ""
-    ApplyTargetCell(x, y)
 }
 
 ; Move to the center of one of the four current cells and make it the new
@@ -715,13 +703,7 @@ ApplyTargetCell(x, y) {
 
 ; Backspace: restore the previous active cell and move back to its center.
 UndoTargetLevel() {
-    global TargetL, TargetT, TargetR, TargetB, TargetHistory, TargetPendingAxis
-
-    ; Backspace also cancels a half-finished axis choice.
-    if (TargetPendingAxis != "") {
-        TargetPendingAxis := ""
-        return
-    }
+    global TargetL, TargetT, TargetR, TargetB, TargetHistory
 
     if (TargetHistory.Length == 0) {
         FlashMessage("NO TARGET TO UNDO")
@@ -733,7 +715,6 @@ UndoTargetLevel() {
     TargetT := previous["t"]
     TargetR := previous["r"]
     TargetB := previous["b"]
-    TargetPendingAxis := ""
 
     MouseMove(Round((TargetL + TargetR) / 2), Round((TargetT + TargetB) / 2), 0)
     DrawTargetGrid()
@@ -760,23 +741,24 @@ DrawTargetGrid() {
     activeW := TargetR - TargetL
     activeH := TargetB - TargetT
     labelSize := Min(22, Max(7, Floor(Min(activeW, activeH) / 4)))
-    ; Keep enough vertical room for the full glyph box at high DPI.
-    labelHeight := Max(52, labelSize * 2 + 8)
+    ; Keep enough vertical room for the glyph, but never exceed the cell.
+    labelHeight := Max(24, labelSize * 2 + 8)
 
-    ; Each cell carries its complete x/y key pair, centered inside the cell.
-    cellLabels := ["h k", "l k", "h j", "l j"]
+    ; One key per cell, fixed to screen position.
+    cellLabels := ["h", "j", "k", "l"]
     for index, cell in cells {
         cellX := cell[1] - TargetMonL
         cellY := cell[2] - TargetMonT
         cellW := cell[3] - cell[1]
         cellH := cell[4] - cell[2]
+        thisLabelHeight := Min(labelHeight, cellH)
 
         border := TargetCellCtrls[index]
         border.Move(cellX, cellY, cellW, cellH)
         border.Value := ""
 
         label := TargetCellLabels[index]
-        label.Move(cellX, cellY + Floor((cellH - labelHeight) / 2), cellW, labelHeight)
+        label.Move(cellX, cellY + Floor((cellH - thisLabelHeight) / 2), cellW, thisLabelHeight)
         label.SetFont("s" labelSize " cFFFFFF w700", "Consolas")
         label.Value := cellLabels[index]
     }
