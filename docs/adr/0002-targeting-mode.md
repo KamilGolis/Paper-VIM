@@ -1,5 +1,7 @@
 # Targeting mode
 
+Status: Superseded by [ADR-0003](0003-single-key-targeting-grid.md)
+
 Paper-VIM had four Vim modes: Off, Normal, Visual, and Insert. Adding pointer
 control as another mode keeps the grid and the keyboard capture behind the same
 global mode switch and lets the HUD, help, CapsLock, and Esc follow one state.

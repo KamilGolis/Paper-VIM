@@ -21,12 +21,13 @@ The Vim mode for text input. Only Esc, CapsLock, and F1 are intercepted.
 The Vim mode where navigation extends a text selection.
 
 **Targeting**:
-The Vim mode that moves the pointer with a recursive 2x2 grid. Enter with `m`
-from Normal; Esc returns to Normal.
+The Vim mode that moves the pointer with a recursive grid. Enter with `m` from
+Normal; Esc returns to Normal.
 
 **Targeting grid**:
-The current 2x2 partition of a monitor or selected cell. Choosing a cell moves
-the pointer to its center and splits that cell again.
+The current grid partition of a monitor or selected cell. It is 2x2 by default.
+Each cell has one key; choosing a cell moves the pointer to its center and
+splits that cell again.
 
 **Command mode**:
 The transient prompt opened with `:` from Normal mode. It accepts `w`, `q`, and `wq`.

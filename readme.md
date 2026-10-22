@@ -23,8 +23,8 @@ This script was born out of necessity. Unable to use Linux with my preferred set
 - **Script Suspension**: Pause all window management with state preservation
 - **HUD Indicators**: Visual feedback for current mode, desktop, and suspension state
 - **Active Window Border**: A click-through cyan outline marks the active managed window
-- **Targeting Mode**: Press `m` in Normal to move the pointer with a recursive 2x2 keyboard grid
-- **Fully Customizable**: UI colors and fonts, plus the main timing values, are configurable
+- **Targeting Mode**: Press `m` in Normal to move the pointer with a configurable recursive keyboard grid, one key per cell
+- **Fully Customizable**: UI colors, fonts, timing values, and the targeting grid size and keys are configurable
 
 ## 📋 Requirements
 
@@ -49,7 +49,7 @@ This script was born out of necessity. Unable to use Linux with my preferred set
 - When **OFF**: Your keyboard works normally
 - When **ON**: Vim keybindings are active; the HUD shows NORMAL, VISUAL, INSERT, or TARGET
 - **F1**: Toggle the combined keybind reference
-- **m** (Normal): Enter Targeting; type one horizontal and one vertical key to move the pointer; Esc exits
+- **m** (Normal): Enter Targeting; press one cell key to move the pointer; Esc exits
 
 ### Window Navigation
 - **n**: Next window in stack
@@ -306,8 +306,8 @@ into the document.
 | Key | Action |
 |-----|--------|
 | **m** | Enter Targeting on the monitor under the pointer |
-| **h / l** | Choose the left / right cell |
-| **k / j** | Choose the up / down cell |
+| **h / j** (default) | Choose the top-left / top-right cell |
+| **k / l** (default) | Choose the bottom-left / bottom-right cell |
 | **Space** | Left click at the pointer; reset the grid to the first level |
 | **r** | Right click at the pointer; reset the grid to the first level |
 | **Backspace** | Undo one grid level and return to its center |
@@ -315,16 +315,17 @@ into the document.
 | **CapsLock** | Turn Vim off |
 | **F1** | Toggle help; closing help returns to Targeting |
 
-The grid covers the full monitor, including the taskbar. Each cell shows its
-complete key pair, such as `h k`, `l k`, `h j`, or `l j`. Press the two letters
-in either order. The pointer moves to the center of the selected cell, and that
-cell is split into another 2x2 grid. Repeat to refine. Previous grid outlines
-remain faintly visible.
+The grid covers the full monitor, including the taskbar. By default it is 2x2
+with keys `h` top-left, `j` top-right, `k` bottom-left, and `l` bottom-right.
+Press a cell key to move the pointer to the center of that cell and split it
+into the next configured grid. Repeat to refine. Previous grid outlines remain
+faintly visible. The grid size and keys are configurable; keys are assigned row
+by row.
 
 The grid stops splitting below `TargetMinCellSize` (8 px by default). The dark
 overlay is click-through and does not take mouse focus. `Space` left-clicks and
 `r` right-clicks at the current pointer; after either click the grid returns to
-the first 2x2 level without moving the pointer.
+the first configured level without moving the pointer.
 
 ### Command Mode (Normal Mode Only)
 | Command | Action |
@@ -515,7 +516,17 @@ Global FocusBorderUpdateInterval := 50       ; Move/resize tracking interval (ms
 ```ahk
 Global TargetingModeColor := "cFF00FF"       ; Target mode HUD text color
 Global TargetMinCellSize := 8                ; Stop splitting below this cell size (px)
+Global TargetGridRows := 2                   ; Target grid rows
+Global TargetGridCols := 2                   ; Target grid columns
+Global TargetGridKeys := ["h", "j", "k", "l"] ; Cell keys, row by row
 ```
+
+`TargetGridKeys` must contain exactly `TargetGridRows * TargetGridCols` unique
+keys. The keys are assigned row by row. The grid must contain at least two
+cells; a 1x1 grid is invalid. `Esc`, `Backspace`, `Space`, `r`, `F1`, and
+`CapsLock` are reserved for Targeting controls and cannot be cell keys. Invalid
+targeting configuration shows `TARGET CONFIG INVALID` instead of opening the
+grid. Short key labels work best in the grid overlay.
 
 ### Timing Configuration
 
