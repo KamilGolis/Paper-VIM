@@ -491,8 +491,8 @@ BuildHelpText(currentMode) {
         "",
         targetTitle,
         "  m                       Enter Targeting (from Normal)",
-        "  " TargetKeySummary() "       Cell keys, left to right, top to bottom",
-        "  " TargetGridRows " x " TargetGridCols "                     Grid size",
+        "  Cell keys: " TargetKeySummary() " (row by row)",
+        "  Grid size: " TargetGridRows " x " TargetGridCols,
         "  one key                 Move pointer; repeat to refine",
         "  Space / r               Left / right click; reset grid",
         "  Backspace               Undo one grid level",
@@ -549,11 +549,11 @@ GetMonitorBoundsAt(x, y) {
 ; Build the virtual-key map from the configured cell keys. Keys are assigned
 ; row by row. Return false when the grid or key list is invalid.
 BuildTargetKeyMap() {
-    global TargetGridRows, TargetGridCols, TargetGridKeys, TargetKeyMap
+    global TargetGridRows, TargetGridCols, TargetGridKeys, TargetKeyMap, TargetGridCellCount
     TargetKeyMap := Map()
-    if (TargetGridRows < 1 || TargetGridCols < 1 || TargetGridRows * TargetGridCols < 2)
+    if (TargetGridRows < 1 || TargetGridCols < 1 || TargetGridCellCount < 2)
         return false
-    if (TargetGridKeys.Length != TargetGridRows * TargetGridCols)
+    if (TargetGridKeys.Length != TargetGridCellCount)
         return false
 
     for index, keyName in TargetGridKeys {
@@ -783,19 +783,19 @@ DrawTargetGrid() {
         }
     }
 
-    activeW := TargetR - TargetL
-    activeH := TargetB - TargetT
-    labelSize := Min(22, Max(7, Floor(Min(activeW, activeH) / 4)))
-    ; Keep enough vertical room for the glyph, but never exceed the cell.
-    labelHeight := Max(24, labelSize * 2 + 8)
-
-    ; One configured key per cell, row by row.
+    ; One configured key per cell, row by row. Size each label to its cell.
     for index, cell in cells {
         cellX := cell[1] - TargetMonL
         cellY := cell[2] - TargetMonT
         cellW := cell[3] - cell[1]
         cellH := cell[4] - cell[2]
-        thisLabelHeight := Min(labelHeight, cellH)
+        keyText := TargetGridKeys[index]
+        keyLength := StrLen(keyText)
+        thisLabelSize := Min(22, Max(7, Floor(Min(cellW, cellH) / 4)))
+        if (keyLength > 1)
+            thisLabelSize := Min(thisLabelSize, Max(7, Floor(cellW / (keyLength + 1))))
+        thisLabelSize := Min(thisLabelSize, Max(7, cellH - 2))
+        thisLabelHeight := Min(Max(24, thisLabelSize * 2 + 8), cellH)
 
         border := TargetCellCtrls[index]
         border.Move(cellX, cellY, cellW, cellH)
@@ -803,8 +803,8 @@ DrawTargetGrid() {
 
         label := TargetCellLabels[index]
         label.Move(cellX, cellY + Floor((cellH - thisLabelHeight) / 2), cellW, thisLabelHeight)
-        label.SetFont("s" labelSize " cFFFFFF w700", "Consolas")
-        label.Value := TargetGridKeys[index]
+        label.SetFont("s" thisLabelSize " cFFFFFF w700", "Consolas")
+        label.Value := keyText
     }
 
     for ctrl in TargetAncestorCtrls

@@ -522,10 +522,11 @@ Global TargetGridKeys := ["h", "j", "k", "l"] ; Cell keys, row by row
 ```
 
 `TargetGridKeys` must contain exactly `TargetGridRows * TargetGridCols` unique
-key names. The keys are assigned row by row. `Esc`, `Backspace`, `Space`, `r`,
-`F1`, and `CapsLock` are reserved for Targeting controls and cannot be cell
-keys. Invalid targeting configuration shows `TARGET CONFIG INVALID` instead of
-opening the grid. Short key labels work best in the grid overlay.
+keys. The keys are assigned row by row. The grid must contain at least two
+cells; a 1x1 grid is invalid. `Esc`, `Backspace`, `Space`, `r`, `F1`, and
+`CapsLock` are reserved for Targeting controls and cannot be cell keys. Invalid
+targeting configuration shows `TARGET CONFIG INVALID` instead of opening the
+grid. Short key labels work best in the grid overlay.
 
 ### Timing Configuration
 
