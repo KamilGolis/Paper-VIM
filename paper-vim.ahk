@@ -1,6 +1,6 @@
 ; ==============================================================================
 ; Paper-VIM: Vim Keybindings + PaperWM Window Manager
-; Version: 1.6.0
+; Version: 1.7.0
 ; Author: KamilGolis
 ; Description: Combines vim-style navigation with PaperWM tiling window manager
 ; License: MIT
@@ -75,11 +75,16 @@ global TargetHistory := []            ; Previous active cells, for Backspace
 global TargetHeldKeys := Map()        ; Held cell keys, to ignore auto-repeat
 global TargetDimGui := ""             ; Full-monitor dim layer
 global TargetAncestorGui := ""        ; Faint outlines of previous cells
-global TargetGridGui := ""            ; Current 2x2 grid labels
-global TargetCellCtrls := []          ; Four cell border controls
-global TargetCellLabels := []         ; Four single-key cell label controls
+global TargetGridGui := ""            ; Current configured grid labels
+global TargetCellCtrls := []          ; Cell border controls
+global TargetCellLabels := []         ; Single-key cell label controls
 global TargetAncestorCtrls := []      ; Fixed pool of previous-outline controls
 global TargetMinCellSize := 8         ; Stop splitting below this cell size (px)
+global TargetGridRows := 2            ; Configured target grid rows
+global TargetGridCols := 2            ; Configured target grid columns
+global TargetGridKeys := ["h", "j", "k", "l"] ; Cell keys, row by row
+global TargetGridCellCount := TargetGridRows * TargetGridCols
+global TargetKeyMap := Map()          ; Virtual key code -> one-based cell index
 
 ; --- Desktop Management ---
 global CurrentDesktop := 1            ; Currently active virtual desktop number
@@ -262,11 +267,11 @@ TargetGridGui.BackColor := "010203"
 TargetGridGui.SetFont("s20 cFFFFFF w700", "Consolas")
 TargetGridGui.Show("NA x0 y0 w1 h1 Hide")
 WinSetTransColor("010203", TargetGridGui)
-loop 4 {
+Loop TargetGridCellCount {
     TargetCellCtrl := TargetGridGui.Add("Text", "x0 y0 w1 h1 +Border +BackgroundTrans", "")
     TargetCellCtrls.Push(TargetCellCtrl)
 }
-Loop 4 {
+Loop TargetGridCellCount {
     TargetCellLabel := TargetGridGui.Add("Text", "x0 y0 w1 h1 +0x200 Center +BackgroundTrans", "")
     TargetCellLabels.Push(TargetCellLabel)
 }
@@ -421,6 +426,7 @@ DismissHelp() {
 ; @param currentMode - Vim mode to mark: 1=Normal, 2=Visual, 3=Insert, 4=Targeting
 ; @return Array: [left column text, right column text]
 BuildHelpText(currentMode) {
+    global TargetGridRows, TargetGridCols
     modeName := (currentMode == 1) ? "NORMAL" : (currentMode == 2) ? "VISUAL" : (currentMode == 3) ? "INSERT" : "TARGET"
     normalTitle := "NORMAL MODE" . (currentMode == 1 ? "  << current" : "")
     visualTitle := "VISUAL MODE" . (currentMode == 2 ? "  << current" : "")
@@ -485,8 +491,8 @@ BuildHelpText(currentMode) {
         "",
         targetTitle,
         "  m                       Enter Targeting (from Normal)",
-        "  h / j                   Top-left / top-right cell",
-        "  k / l                   Bottom-left / bottom-right cell",
+        "  " TargetKeySummary() "                   Cell keys, row by row",
+        "  " TargetGridRows " x " TargetGridCols "                     Grid size",
         "  one key                 Move pointer; repeat to refine",
         "  Space / r               Left / right click; reset grid",
         "  Backspace               Undo one grid level",
@@ -540,6 +546,37 @@ GetMonitorBoundsAt(x, y) {
     return [left, top, right, bottom]
 }
 
+; Build the virtual-key map from the configured cell keys. Keys are assigned
+; row by row. Return false when the grid or key list is invalid.
+BuildTargetKeyMap() {
+    global TargetGridRows, TargetGridCols, TargetGridKeys, TargetKeyMap
+    TargetKeyMap := Map()
+    if (TargetGridRows < 1 || TargetGridCols < 1 || TargetGridRows * TargetGridCols < 2)
+        return false
+    if (TargetGridKeys.Length != TargetGridRows * TargetGridCols)
+        return false
+
+    for index, keyName in TargetGridKeys {
+        vk := GetKeyVK(keyName)
+        ; These keys own Targeting controls, not grid cells.
+        if (!vk || vk = 0x1B || vk = 0x08 || vk = 0x20 || vk = 0x52 || vk = 0x70 || vk = 0x14)
+            return false
+        if (TargetKeyMap.Has(vk))
+            return false
+        TargetKeyMap[vk] := index
+    }
+    return true
+}
+
+; Return the configured keys in row-major order for the F1 help.
+TargetKeySummary() {
+    global TargetGridKeys
+    summary := ""
+    for keyName in TargetGridKeys
+        summary .= (summary = "" ? "" : " ") keyName
+    return summary
+}
+
 ; Enter Targeting from Normal mode. The grid covers the monitor under the
 ; pointer, including the taskbar, so every screen point is reachable.
 EnterTargeting() {
@@ -549,6 +586,11 @@ EnterTargeting() {
 
     if (VimMode != 1 || TargetActive)
         return
+
+    if (!BuildTargetKeyMap()) {
+        FlashMessage("TARGET CONFIG INVALID")
+        return
+    }
 
     MouseGetPos(&mouseX, &mouseY)
     bounds := GetMonitorBoundsAt(mouseX, mouseY)
@@ -613,15 +655,17 @@ StartTargetHook() {
 
 ; Handle one key from the Targeting InputHook.
 TargetKeyDown(ih, vk, sc) {
-    global VimMode, TargetActive, TargetHeldKeys
+    global VimMode, TargetActive, TargetHeldKeys, TargetKeyMap
     if (VimMode != 4 || !TargetActive)
         return
 
     ; One key selects one cell. Ignore auto-repeat until the key is released.
-    if (vk = 0x48 || vk = 0x4A || vk = 0x4B || vk = 0x4C) {
+    if (TargetKeyMap.Has(vk)) {
         if (TargetHeldKeys.Has(vk))
             return
         TargetHeldKeys[vk] := true
+        ApplyTargetCell(TargetKeyMap[vk])
+        return
     }
 
     switch vk {
@@ -630,10 +674,6 @@ TargetKeyDown(ih, vk, sc) {
         case 0x70: PauseTargetingForHelp()    ; F1
         case 0x20: TargetClick("left")        ; Space
         case 0x52: TargetClick("right")       ; r
-        case 0x48: ApplyTargetCell(0, 0)      ; h: top-left
-        case 0x4A: ApplyTargetCell(1, 0)      ; j: top-right
-        case 0x4B: ApplyTargetCell(0, 1)      ; k: bottom-left
-        case 0x4C: ApplyTargetCell(1, 1)      ; l: bottom-right
     }
 }
 
@@ -671,20 +711,21 @@ ResetTargetingGrid() {
     DrawTargetGrid()
 }
 
-; Move to the center of one of the four current cells and make it the new
-; active cell. The cell is split into another 2x2 grid on the next step.
-ApplyTargetCell(x, y) {
+; Move to the center of the selected cell (one-based, row-major) and make it
+; the new active cell. The cell is split into the configured grid next.
+ApplyTargetCell(index) {
     global TargetL, TargetT, TargetR, TargetB, TargetHistory, TargetMinCellSize
+    global TargetGridRows, TargetGridCols
 
     width := TargetR - TargetL
     height := TargetB - TargetT
-    midX := TargetL + Floor(width / 2)
-    midY := TargetT + Floor(height / 2)
+    row := Floor((index - 1) / TargetGridCols)
+    col := Mod(index - 1, TargetGridCols)
 
-    newL := x ? midX : TargetL
-    newR := x ? TargetR : midX
-    newT := y ? midY : TargetT
-    newB := y ? TargetB : midY
+    newL := TargetL + Floor(width * col / TargetGridCols)
+    newR := (col + 1 = TargetGridCols) ? TargetR : TargetL + Floor(width * (col + 1) / TargetGridCols)
+    newT := TargetT + Floor(height * row / TargetGridRows)
+    newB := (row + 1 = TargetGridRows) ? TargetB : TargetT + Floor(height * (row + 1) / TargetGridRows)
 
     if ((newR - newL) < TargetMinCellSize || (newB - newT) < TargetMinCellSize) {
         FlashMessage("TARGET LIMIT")
@@ -720,23 +761,27 @@ UndoTargetLevel() {
     DrawTargetGrid()
 }
 
-; Redraw the current 2x2 grid and the faint outlines of previous cells.
+; Redraw the configured grid and the faint outlines of previous cells.
 DrawTargetGrid() {
     global TargetMonL, TargetMonT, TargetMonR, TargetMonB
     global TargetL, TargetT, TargetR, TargetB, TargetHistory
     global TargetCellCtrls, TargetCellLabels, TargetAncestorCtrls
+    global TargetGridRows, TargetGridCols, TargetGridKeys
 
     width := TargetR - TargetL
     height := TargetB - TargetT
-    midX := TargetL + Floor(width / 2)
-    midY := TargetT + Floor(height / 2)
-
-    cells := [
-        [TargetL, TargetT, midX, midY],
-        [midX, TargetT, TargetR, midY],
-        [TargetL, midY, midX, TargetB],
-        [midX, midY, TargetR, TargetB]
-    ]
+    cells := []
+    Loop TargetGridRows {
+        rowIndex := A_Index
+        Loop TargetGridCols {
+            colIndex := A_Index
+            left := TargetL + Floor(width * (colIndex - 1) / TargetGridCols)
+            right := (colIndex = TargetGridCols) ? TargetR : TargetL + Floor(width * colIndex / TargetGridCols)
+            top := TargetT + Floor(height * (rowIndex - 1) / TargetGridRows)
+            bottom := (rowIndex = TargetGridRows) ? TargetB : TargetT + Floor(height * rowIndex / TargetGridRows)
+            cells.Push([left, top, right, bottom])
+        }
+    }
 
     activeW := TargetR - TargetL
     activeH := TargetB - TargetT
@@ -744,8 +789,7 @@ DrawTargetGrid() {
     ; Keep enough vertical room for the glyph, but never exceed the cell.
     labelHeight := Max(24, labelSize * 2 + 8)
 
-    ; One key per cell, fixed to screen position.
-    cellLabels := ["h", "j", "k", "l"]
+    ; One configured key per cell, row by row.
     for index, cell in cells {
         cellX := cell[1] - TargetMonL
         cellY := cell[2] - TargetMonT
@@ -760,7 +804,7 @@ DrawTargetGrid() {
         label := TargetCellLabels[index]
         label.Move(cellX, cellY + Floor((cellH - thisLabelHeight) / 2), cellW, thisLabelHeight)
         label.SetFont("s" labelSize " cFFFFFF w700", "Consolas")
-        label.Value := cellLabels[index]
+        label.Value := TargetGridKeys[index]
     }
 
     for ctrl in TargetAncestorCtrls
