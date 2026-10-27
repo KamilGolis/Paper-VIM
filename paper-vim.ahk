@@ -1,6 +1,6 @@
 ; ==============================================================================
 ; Paper-VIM: Vim Keybindings + PaperWM Window Manager
-; Version: 1.8.0
+; Version: 1.8.1
 ; Author: KamilGolis
 ; Description: Combines vim-style navigation with PaperWM tiling window manager
 ; License: MIT
@@ -1373,11 +1373,11 @@ GetFocusBorderRect(hwnd) {
 
 ; Check whether a window should get the focus border.
 ; @param hwnd - Candidate active window
-; @return True when the window is managed and visible in tiled mode
+; @return True when the window is managed and visible in tiled or overlay mode
 IsFocusBorderCandidate(hwnd) {
-    global FocusBorderEnabled, VimMode, Suspended, EmergencyMode, HelpVisible, OverlayMode
+    global FocusBorderEnabled, VimMode, Suspended, EmergencyMode, HelpVisible
 
-    if (!FocusBorderEnabled || VimMode == 0 || VimMode == 4 || Suspended || EmergencyMode || HelpVisible || OverlayMode)
+    if (!FocusBorderEnabled || VimMode == 0 || VimMode == 4 || Suspended || EmergencyMode || HelpVisible)
         return false
     if (!hwnd || !WinExist("ahk_id " hwnd))
         return false
