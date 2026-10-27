@@ -268,8 +268,11 @@ LoadConfig() {
     for section in StrSplit(sectionNames, "`n", "`r") {
         if (section = "")
             continue
-        if (!SettingsSchema.Has(section) && !RegExMatch(section, "^Keys\."))
-            ConfigWarnings.Push("Unknown section [" section "]")
+        if (SettingsSchema.Has(section))
+            continue
+        if (SubStr(section, 1, 5) = "Keys." && Keymap.Has(SubStr(section, 6)))
+            continue
+        ConfigWarnings.Push("Unknown section [" section "]")
     }
 
     for section, schema in SettingsSchema {

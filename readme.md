@@ -453,10 +453,12 @@ TargetGridKeys=h, j, k, l
 
 [Keys.Normal]
 Target=q
-NextWindow=x
+
+[Keys.Manage]
+NextWindow=F6
 
 [Keys.Text]
-Left=a
+Left=F5
 ```
 
 ### Settings
