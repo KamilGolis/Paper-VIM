@@ -1,6 +1,6 @@
 ; ==============================================================================
 ; Paper-VIM: Vim Keybindings + PaperWM Window Manager
-; Version: 1.7.0
+; Version: 1.8.0
 ; Author: KamilGolis
 ; Description: Combines vim-style navigation with PaperWM tiling window manager
 ; License: MIT
@@ -16,27 +16,21 @@ SetControlDelay -1
 CoordMode "Mouse", "Screen"
 CoordMode "ToolTip", "Screen"
 
+; Defaults and the optional paper-vim.ini overrides live in config.ahk.
+#Include config.ahk
+
+global DockSlotCount := DockLeftCount + 1 + DockRightCount
+global TargetGridCellCount := TargetGridRows * TargetGridCols
+
 ; ==============================================================================
 ; CONFIGURATION & GLOBAL VARIABLES
 ; ==============================================================================
 
-; --- Window Layout Configuration ---
+; --- Window Layout State ---
+; User-facing layout settings are defined in config.ahk.
 global WindowStack := []              ; Array of managed window handles
-global FullWidthRatio := 1.0          ; "Full" preset; selects the focus/peek layout
-global FocusWidthRatio := 0.85        ; Focus-mode window width (fraction of the viewport)
-; Focus mode uses the same Gap as the 25/50/75 tiling presets. The remaining
-; space becomes the visible slices of the previous and next windows.
 global WindowWidths := Map()          ; Per-window width ratio (hwnd -> 0.25..1.0)
 global ViewOffset := 0                ; Horizontal scroll offset of the window row (px)
-global Gap := 8                       ; Gap between windows and screen edges
-global BarHeight := 60                ; Space reserved at the top for the HUD and dock
-global EmergencyMargin := 40          ; Margin for the post-error reachable layout
-global EmergencyMinWidth := 400       ; Minimum width of the post-error layout
-global EmergencyMinHeight := 300      ; Minimum height of the post-error layout
-global EmergencyMaxWidth := 1200      ; Maximum width of the post-error layout
-global EmergencyMaxHeight := 800      ; Maximum height of the post-error layout
-global TaskbarMode := "auto"          ; auto, left, top, right, bottom, or none
-global TaskbarSize := 0               ; Fixed taskbar size in px (0 = 48); used with a fixed mode
 global OverlayMode := false           ; Toggle between tiling and overlay (fullscreen) mode
 global TaskbarHidden := false         ; Track Windows taskbar visibility state
 
@@ -79,11 +73,6 @@ global TargetGridGui := ""            ; Current configured grid labels
 global TargetCellCtrls := []          ; Cell border controls
 global TargetCellLabels := []         ; Single-key cell label controls
 global TargetAncestorCtrls := []      ; Fixed pool of previous-outline controls
-global TargetMinCellSize := 8         ; Stop splitting below this cell size (px)
-global TargetGridRows := 2            ; Configured target grid rows
-global TargetGridCols := 2            ; Configured target grid columns
-global TargetGridKeys := ["h", "j", "k", "l"] ; Cell keys, row by row
-global TargetGridCellCount := TargetGridRows * TargetGridCols
 global TargetKeyMap := Map()          ; Virtual key code -> one-based cell index
 
 ; --- Desktop Management ---
@@ -91,23 +80,8 @@ global CurrentDesktop := 1            ; Currently active virtual desktop number
 global InitializedDesktops := Map()  ; Track which desktops have been auto-arranged
 global ReflowTimer := 0               ; Debounce timer for window reflow operations
 
-; --- Visual Customization ---
-global HUDBackgroundColor := "121212"     ; VIM HUD background (dark gray)
-global DockBackgroundColor := "1a1a1a"    ; Dock background (darker gray)
-global NormalModeColor := "c00FF00"       ; Normal mode text color (green)
-global VisualModeColor := "cFF0000"       ; Visual mode text color (red)
-global InsertModeColor := "c00BFFF"       ; Insert mode text color (blue)
-global TargetingModeColor := "cFF00FF"    ; Targeting mode text color (magenta)
-global FlashMsgColor := "cFFFF00"         ; Flash message color (yellow)
-global SuspendedModeColor := "cFF8800"    ; Suspended mode text color (orange)
-global ActiveIndicatorColor := "00FF00"   ; Dock active window underline (green)
-global DockInactiveNumberColor := "c888888" ; Dock inactive window number color (gray)
-
-; --- Focus Border Configuration ---
-global FocusBorderEnabled := true        ; Draw a focus border around the active window
-global FocusBorderColor := "00A8FF"      ; Focus border color (cyan)
-global FocusBorderThickness := 3         ; Border thickness in physical pixels
-global FocusBorderUpdateInterval := 50   ; Timer interval for move/resize tracking (ms)
+; --- Visual and Focus Border State ---
+; User-facing colors and focus-border settings are defined in config.ahk.
 global FocusBars := []                   ; Four click-through border Gui windows
 global FocusBorderShown := false         ; Border bars are currently visible
 global FocusBorderTarget := 0            ; Window handle the border is tracking
@@ -116,22 +90,8 @@ global FocusBorderY := 0
 global FocusBorderW := 0
 global FocusBorderH := 0
 
-; --- Font Configuration ---
-global FontFamily := "Segoe UI"          ; Font family used throughout UI
-global HUDFontSize := "s16"              ; HUD text size
-global HUDFontWeight := "w800"           ; HUD text weight (bold)
-global DockNumberFontSize := "s8"        ; Dock window number text size
-
-; --- Dock Configuration ---
-global DockIconSize := 32             ; Size of dock icons in pixels
-global DockIconSpacing := 8           ; Spacing between dock icons
-global DockLeftCount := 2             ; Number of icons shown left of active
-global DockRightCount := 2            ; Number of icons shown right of active
-global DockMarginX := 12              ; Dock horizontal margin
-global DockMarginY := 8               ; Dock vertical margin
-global DockPosY := 10                 ; Dock Y position from top
-global DockNumberHeight := 16         ; Height of the number labels
-global DockSlotCount := DockLeftCount + 1 + DockRightCount
+; --- Dock State ---
+; User-facing dock settings are defined in config.ahk.
 global DockSlotPics := []             ; Persistent Picture controls
 global DockNumberCtrls := []          ; Persistent number label controls
 global DockSlotHwnds := []            ; Window handle currently shown in each slot
@@ -142,19 +102,8 @@ global DockShown := false             ; Dock window is currently visible
 global DockShownX := 0                ; Last shown position
 global DockShownY := 0
 
-; --- HUD Configuration ---
-global HUDMarginRight := 20           ; HUD distance from the right edge of the work area
-global HUDPosY := 40                  ; HUD Y position from the top of the work area
-global HUDWidth := 220                ; HUD text control width; the window auto-sizes to the text
-global FlashDuration := 800           ; Flash message duration in milliseconds
+; --- HUD State ---
 global FlashTimer := 0                ; Timer handle of the current flash restore
-
-; --- Timing Configuration ---
-global DblClickTimeout := 400         ; Timeout for double-key commands (gg, dd, etc.)
-global DebounceDelay := 50            ; Debounce delay for window reflow (ms)
-global DesktopSwitchDelay := 200      ; Delay after desktop switch before arranging (ms)
-global DockUpdateDelay := 100         ; Delay for dock update after window change (ms)
-global TooltipDuration := 1000        ; Tooltip display duration (ms)
 
 ; --- Window Style Constants ---
 global TitleBarMask := 0x00C00000     ; Window style mask for title bar detection (WS_CAPTION)
@@ -435,6 +384,7 @@ BuildHelpText(currentMode) {
 
     leftLines := [
         "Paper-VIM keybinds  |  current mode: " modeName,
+        "Key labels below are defaults; paper-vim.ini may override them.",
         "",
         "COMMON",
         "  F1                      Toggle this help",
@@ -2429,7 +2379,7 @@ i:: {
 
 ; --- Document Navigation (Normal and Visual) ---
 g:: {
-    if (A_PriorHotkey == "g" and A_TimeSincePriorHotkey < DblClickTimeout) {
+    if (KeyMatches("Text", "GotoStart", A_PriorHotkey) and A_TimeSincePriorHotkey < DblClickTimeout) {
         if (VimMode == 2)
             Send "+^{Home}" ; 'gg' extends selection in Visual mode
         else
@@ -2478,13 +2428,13 @@ t:: ExecuteFind(true)
 
 ; Delete Commands
 d:: {
-    if (A_PriorHotkey == "d" and A_TimeSincePriorHotkey < DblClickTimeout)
+    if (KeyMatches("Normal", "DeleteLine", A_PriorHotkey) and A_TimeSincePriorHotkey < DblClickTimeout)
         Send "{Home}+{End}{BackSpace}{Delete}" ; 'dd'
 }
 
 ; Change Commands
 c:: {
-    if (A_PriorHotkey == "c" and A_TimeSincePriorHotkey < DblClickTimeout) {
+    if (KeyMatches("Normal", "Change", A_PriorHotkey) and A_TimeSincePriorHotkey < DblClickTimeout) {
         Send "{Home}+{End}{BackSpace}" ; 'cc'
         UpdateHUD(3)
     } else {
@@ -2495,7 +2445,7 @@ c:: {
 
 ; Yank Commands
 y:: {
-    if (A_PriorHotkey == "y" and A_TimeSincePriorHotkey < DblClickTimeout) {
+    if (KeyMatches("Normal", "Yank", A_PriorHotkey) and A_TimeSincePriorHotkey < DblClickTimeout) {
         Send "{Home}+{End}^c" ; 'yy'
         FlashMessage("COPIED LINE")
     } else {
@@ -2589,3 +2539,273 @@ F1:: ToggleHelp()
 #HotIf
 
 #HotIf
+
+
+; Execute a configured key action. Unchanged keys still use the original hotkey
+; definitions; changed keys are bound to this dispatcher.
+RunKeyAction(context, action, *) {
+    global VimMode, Suspended, EmergencyMode, HelpVisible, OverlayMode
+    global WindowStack, WindowWidths, CurrentDesktop, InitializedDesktops
+    global DesktopSwitchDelay, FullWidthRatio, DblClickTimeout
+
+    switch (context "." action) {
+        case "Global.ToggleVim":
+        {
+            if (HelpVisible)
+                return
+            if (VimMode == 4) {
+                StopTargeting()
+                UpdateHUD(0)
+                return
+            }
+            if (Suspended) {
+                if (EmergencyMode)
+                    return
+                ToggleSuspend()
+                UpdateHUD(1)
+            } else {
+                UpdateHUD(VimMode == 0 ? 1 : 0)
+            }
+        }
+
+        case "Suspend.Suspend":
+            ToggleSuspend()
+
+        case "Desktop.PrevDesktop":
+        {
+            Send("^#{Left}")
+            CurrentDesktop -= 1
+            if (CurrentDesktop < 1)
+                CurrentDesktop := 1
+            if (!InitializedDesktops.Has(CurrentDesktop))
+                SetTimer(() => InitializeDesktop(CurrentDesktop), -DesktopSwitchDelay)
+        }
+        case "Desktop.NextDesktop":
+        {
+            Send("^#{Right}")
+            CurrentDesktop += 1
+            if (CurrentDesktop > 10)
+                CurrentDesktop := 10
+            if (!InitializedDesktops.Has(CurrentDesktop))
+                SetTimer(() => InitializeDesktop(CurrentDesktop), -DesktopSwitchDelay)
+        }
+        case "Desktop.Desktop1": GoToDesktop(1)
+        case "Desktop.Desktop2": GoToDesktop(2)
+        case "Desktop.Desktop3": GoToDesktop(3)
+        case "Desktop.Desktop4": GoToDesktop(4)
+        case "Desktop.Desktop5": GoToDesktop(5)
+
+        case "Manage.Overlay":
+        {
+            OverlayMode := !OverlayMode
+            FlashMessage(OverlayMode ? "OVERLAY MODE" : "TILING MODE")
+            ReflowStack()
+        }
+        case "Manage.RemoveWindow":
+        {
+            if (WindowStack.Length == 0)
+                return
+            activeHwnd := WinActive("A")
+            if (!activeHwnd)
+                return
+            for i, hwnd in WindowStack {
+                if (hwnd == activeHwnd) {
+                    ForgetWindowWidth(hwnd)
+                    WindowStack.RemoveAt(i)
+                    FlashMessage("WINDOW REMOVED")
+                    break
+                }
+            }
+            ReflowStack()
+        }
+        case "Manage.ToggleTaskbar": ToggleTaskbar()
+        case "Manage.SwapLeft": SwapActive(-1)
+        case "Manage.SwapRight": SwapActive(1)
+        case "Manage.NextWindow": CycleStack(1)
+        case "Manage.PrevWindow": CycleStack(-1)
+        case "Manage.Reflow": ReflowStack()
+        case "Manage.Width25": SetWindowWidthPreset(0.25, "25%")
+        case "Manage.Width50": SetWindowWidthPreset(0.50, "50%")
+        case "Manage.Width75": SetWindowWidthPreset(0.75, "75%")
+        case "Manage.WidthFull": SetWindowWidthPreset(FullWidthRatio, "FULL")
+        case "Manage.Center": CenterActiveWindow()
+
+        case "Text.Left": Send(VimMode == 2 ? "+{Left}" : "{Left}")
+        case "Text.Down": Send(VimMode == 2 ? "+{Down}" : "{Down}")
+        case "Text.Up": Send(VimMode == 2 ? "+{Up}" : "{Up}")
+        case "Text.Right": Send(VimMode == 2 ? "+{Right}" : "{Right}")
+        case "Text.WordNext": Send(VimMode == 2 ? "^+{Right}" : "^{Right}")
+        case "Text.WordPrev": Send(VimMode == 2 ? "^+{Left}" : "^{Left}")
+        case "Text.WordEnd": Send(VimMode == 2 ? "^+{Right}+{Left}" : "^{Right}{Left}")
+        case "Text.LineStart": Send(VimMode == 2 ? "+{Home}" : "{Home}")
+        case "Text.LineEnd": Send(VimMode == 2 ? "+{End}" : "{End}")
+        case "Text.PageDown": Send(VimMode == 2 ? "+{PgDn}" : "{PgDn}")
+        case "Text.PageUp": Send(VimMode == 2 ? "+{PgUp}" : "{PgUp}")
+        case "Text.VisualMode": UpdateHUD(VimMode == 1 ? 2 : 1)
+        case "Text.Insert":
+        {
+            if (VimMode == 2)
+                Send "{Left}"
+            UpdateHUD(3)
+        }
+        case "Text.GotoStart":
+        {
+            if (KeyMatches("Text", "GotoStart", A_PriorHotkey) and A_TimeSincePriorHotkey < DblClickTimeout) {
+                if (VimMode == 2)
+                    Send "+^{Home}"
+                else
+                    Send "^{Home}"
+            }
+        }
+        case "Text.GotoEnd":
+        {
+            if (VimMode == 2)
+                Send "+^{End}"
+            else
+                Send "^{End}"
+        }
+
+        case "Normal.Target": EnterTargeting()
+        case "Normal.Find": ExecuteFind(false)
+        case "Normal.Till": ExecuteFind(true)
+        case "Normal.AppFind":
+        {
+            Send "^f"
+            UpdateHUD(0)
+        }
+        case "Normal.DeleteLine":
+        {
+            if (KeyMatches("Normal", "DeleteLine", A_PriorHotkey) and A_TimeSincePriorHotkey < DblClickTimeout)
+                Send "{Home}+{End}{BackSpace}{Delete}"
+        }
+        case "Normal.Change":
+        {
+            if (KeyMatches("Normal", "Change", A_PriorHotkey) and A_TimeSincePriorHotkey < DblClickTimeout) {
+                Send "{Home}+{End}{BackSpace}"
+                UpdateHUD(3)
+            } else {
+                Send "^{Delete}"
+                UpdateHUD(3)
+            }
+        }
+        case "Normal.Yank":
+        {
+            if (KeyMatches("Normal", "Yank", A_PriorHotkey) and A_TimeSincePriorHotkey < DblClickTimeout) {
+                Send "{Home}+{End}^c"
+                FlashMessage("COPIED LINE")
+            } else {
+                Send "^c"
+            }
+        }
+        case "Normal.Paste": Send "^v"
+        case "Normal.Undo": Send "^z"
+        case "Normal.Redo": Send "^y"
+        case "Normal.DeleteChar": Send "{Delete}"
+        case "Normal.OpenBelow":
+        {
+            Send("{End}{Enter}")
+            UpdateHUD(3)
+        }
+        case "Normal.OpenAbove":
+        {
+            Send("{Home}{Enter}{Up}")
+            UpdateHUD(3)
+        }
+        case "Normal.Append":
+        {
+            Send("{Right}")
+            UpdateHUD(3)
+        }
+        case "Normal.AppendEnd":
+        {
+            Send("{End}")
+            UpdateHUD(3)
+        }
+        case "Normal.Semicolon": return
+        case "Normal.Command":
+        {
+            targetHwnd := WinActive("A")
+            prevVimMode := VimMode
+            UpdateHUD(0)
+            Result := InputBox("Command: w (save), q (quit), wq (save & quit)", "Vim Command", "h80 w300")
+            if (Result.Result = "OK") {
+                val := Trim(StrLower(Result.Value))
+                if (SubStr(val, 1, 1) == ":")
+                    val := Trim(SubStr(val, 2))
+                if (val = "w" || val = "q" || val = "wq") {
+                    if (targetHwnd && WinExist("ahk_id " targetHwnd)) {
+                        try WinActivate("ahk_id " targetHwnd)
+                        Sleep 100
+                    }
+                    if (val = "w" || val = "wq")
+                        Send "^s"
+                    if (val = "q")
+                        Send "!{F4}"
+                    if (val = "wq") {
+                        Sleep 100
+                        Send "!{F4}"
+                    }
+                }
+            }
+            if (VimMode == 0 && prevVimMode != 0)
+                UpdateHUD(prevVimMode)
+        }
+        case "Normal.Window1": GoToWindowByIndex(1)
+        case "Normal.Window2": GoToWindowByIndex(2)
+        case "Normal.Window3": GoToWindowByIndex(3)
+        case "Normal.Window4": GoToWindowByIndex(4)
+        case "Normal.Window5": GoToWindowByIndex(5)
+        case "Normal.Window6": GoToWindowByIndex(6)
+        case "Normal.Window7": GoToWindowByIndex(7)
+        case "Normal.Window8": GoToWindowByIndex(8)
+        case "Normal.Window9": GoToWindowByIndex(9)
+
+        case "Visual.Delete":
+        {
+            Send("{BackSpace}")
+            UpdateHUD(1)
+        }
+        case "Visual.Change":
+        {
+            Send("{BackSpace}")
+            UpdateHUD(3)
+        }
+        case "Visual.Yank":
+        {
+            Send("^c")
+            UpdateHUD(1)
+            FlashMessage("YANKED")
+        }
+        case "Visual.DeleteChar":
+        {
+            Send("{Delete}")
+            UpdateHUD(1)
+        }
+        case "Visual.Paste":
+        {
+            Send("^v")
+            UpdateHUD(1)
+        }
+        case "Visual.UnsupportedA", "Visual.UnsupportedShiftA", "Visual.UnsupportedO", "Visual.UnsupportedShiftO", "Visual.UnsupportedSemicolon", "Visual.UnsupportedColon", "Visual.UnsupportedLess", "Visual.UnsupportedGreater", "Visual.UnsupportedShiftV", "Visual.UnsupportedCtrlV", "Visual.UnsupportedFind", "Visual.UnsupportedTill", "Visual.UnsupportedAppFind":
+            return
+
+        case "Escape.Escape":
+        {
+            if (HelpVisible) {
+                DismissHelp()
+                return
+            }
+            if (VimMode == 4) {
+                ExitTargeting(1)
+                return
+            }
+            if (VimMode != 1)
+                UpdateHUD(1)
+        }
+
+        case "Help.Help": ToggleHelp()
+    }
+}
+
+; Apply paper-vim.ini key overrides after all default hotkeys exist.
+RegisterKeymap()

@@ -425,101 +425,90 @@ and a hidden target shows "WINDOW X NOT AVAILABLE".
 
 ---
 
-## ⚙️ Configuration (Advanced)
+## ⚙️ Configuration
 
-All configuration variables are defined at the top of `paper-vim.ahk`. You can customize the behavior by editing these values:
+Defaults live in `config.ahk`. To override them, copy `paper-vim.example.ini`
+to `paper-vim.ini` next to `paper-vim.ahk` and edit only the values you need.
+Omitted values keep their defaults. Restart Paper-VIM after changing the file.
 
-### Window Layout Configuration
+`paper-vim.ini` is ignored by Git. User-facing settings are configurable; runtime
+state such as window handles, GUI controls, caches, and timers is not.
 
-```ahk
-Global FullWidthRatio := 1.0                 ; "Full" preset; selects focus/peek mode
-Global FocusWidthRatio := 0.85               ; Focus-mode window width
-Global WindowWidths := Map()                 ; Per-window width ratios (remembered at runtime)
-Global Gap := 8                              ; Gap between windows and work-area edges
-Global BarHeight := 60                       ; Top strip reserved for the HUD and dock
-Global TaskbarMode := "auto"                 ; auto, left, top, right, bottom, or none
-Global TaskbarSize := 0                      ; Fixed taskbar size in px (0 = 48); used with a fixed mode
+```ini
+[Layout]
+Gap=8
+BarHeight=60
+TaskbarMode=auto
+TaskbarSize=0
+
+[Colors]
+HUDBackgroundColor=121212
+NormalModeColor=c00FF00
+TargetingModeColor=cFF00FF
+
+[Targeting]
+TargetGridRows=2
+TargetGridCols=2
+TargetGridKeys=h, j, k, l
+
+[Keys.Normal]
+Target=q
+
+[Keys.Manage]
+NextWindow=F6
+
+[Keys.Text]
+Left=F5
 ```
 
-Width presets are `0.25`, `0.50`, and `0.75` of the usable work area. The pixel
-width is computed as `workWidth * ratio - Gap * (1 + ratio)`, which incorporates
-the gaps so the presets tile evenly.
+### Settings
 
-The full preset is different: it uses `FocusWidthRatio` (85% by default) and the
-same `Gap` for its gutters as the tiled presets. The remaining space is the
-visible slice of the previous and next window. On a 3840 px screen this leaves
-about 7.3% of each neighbour visible.
+The example file lists every setting and default:
 
-`TaskbarMode := "auto"` reads the taskbar position from Windows. If detection
-fails on your setup, set a fixed edge and size, for example:
+- `[Layout]` — ratios, gaps, emergency bounds, taskbar mode and size
+- `[Colors]` — HUD, dock, mode, flash, and suspended colors
+- `[FocusBorder]` — enabled flag, color, thickness, update interval
+- `[Fonts]` — UI font family and sizes
+- `[Dock]` — icon size, spacing, side counts, margins, position
+- `[HUD]` — margins, position, width, flash duration
+- `[Timing]` — double-key timeout, reflow debounce, desktop, dock, and tooltip delays
+- `[Targeting]` — minimum cell size, rows, columns, and key list
 
-```ahk
-Global TaskbarMode := "left"
-Global TaskbarSize := 72
+Values are parsed by type: integers, numbers, booleans (`true`/`false` or
+`1`/`0`), strings, and comma-separated key lists. Unknown sections or keys
+produce a warning; invalid values stop startup with an error.
+
+### Keybindings
+
+Every user-facing hotkey has an action name. Override the key in the matching
+`[Keys.<context>]` section:
+
+```ini
+[Keys.Global]
+ToggleVim=CapsLock
+
+[Keys.Normal]
+Target=m
+Find=f
+DeleteLine=d
+
+[Keys.Text]
+Left=h
+Down=j
+Up=k
+Right=l
+
+[Keys.Visual]
+Delete=d
+Change=c
 ```
 
-### Visual Customization - Colors
+Use AutoHotkey key names and modifiers: `n`, `Tab`, `^j`, `+4`, `SC027`, `^+1`.
+The example file lists all action names and defaults. Duplicate keys in one
+context, empty keys, and keys that AutoHotkey cannot register stop startup with
+an error. Restart is required after editing keybindings.
 
-```ahk
-Global HUDBackgroundColor := "121212"        ; VIM HUD background (dark gray)
-Global DockBackgroundColor := "1a1a1a"       ; Dock background (darker gray)
-Global NormalModeColor := "c00FF00"          ; Normal mode text color (green)
-Global VisualModeColor := "cFF0000"          ; Visual mode text color (red)
-Global InsertModeColor := "c00BFFF"          ; Insert mode text color (blue)
-Global TargetingModeColor := "cFF00FF"       ; Targeting mode text color (magenta)
-Global FlashMsgColor := "cFFFF00"            ; Flash message color (yellow)
-Global SuspendedModeColor := "cFF8800"       ; Suspended mode text color (orange)
-Global ActiveIndicatorColor := "00FF00"      ; Dock active window underline (green)
-Global DockInactiveNumberColor := "c888888"  ; Dock inactive window number color (gray)
-```
-
-### Font Configuration
-
-```ahk
-Global FontFamily := "Segoe UI"              ; Font family used throughout UI
-Global HUDFontSize := "s16"                  ; HUD text size
-Global HUDFontWeight := "w800"               ; HUD text weight (bold)
-Global DockNumberFontSize := "s8"            ; Dock window number text size
-```
-
-### Dock Configuration
-
-```ahk
-Global DockIconSize := 32                    ; Size of dock icons in pixels
-Global DockIconSpacing := 8                  ; Spacing between dock icons
-Global DockLeftCount := 2                    ; Number of icons shown left of active
-Global DockRightCount := 2                   ; Number of icons shown right of active
-Global DockMarginX := 12                     ; Dock horizontal margin
-Global DockMarginY := 8                      ; Dock vertical margin
-Global DockPosY := 10                        ; Dock Y position from the top of the work area
-```
-
-### HUD Configuration
-
-```ahk
-Global HUDMarginRight := 20                  ; HUD distance from the right edge of the work area
-Global HUDPosY := 40                         ; HUD Y position from the top of the work area
-Global HUDWidth := 220                       ; HUD text control width; window auto-sizes
-```
-
-### Focus Border Configuration
-
-```ahk
-Global FocusBorderEnabled := true            ; Draw a focus border around the active window
-Global FocusBorderColor := "00A8FF"          ; Focus border color (cyan)
-Global FocusBorderThickness := 3             ; Border thickness in physical pixels
-Global FocusBorderUpdateInterval := 50       ; Move/resize tracking interval (ms)
-```
-
-### Targeting Configuration
-
-```ahk
-Global TargetingModeColor := "cFF00FF"       ; Target mode HUD text color
-Global TargetMinCellSize := 8                ; Stop splitting below this cell size (px)
-Global TargetGridRows := 2                   ; Target grid rows
-Global TargetGridCols := 2                   ; Target grid columns
-Global TargetGridKeys := ["h", "j", "k", "l"] ; Cell keys, row by row
-```
+### Targeting limits
 
 `TargetGridKeys` must contain exactly `TargetGridRows * TargetGridCols` unique
 keys. The keys are assigned row by row. The grid must contain at least two
@@ -528,24 +517,10 @@ cells; a 1x1 grid is invalid. `Esc`, `Backspace`, `Space`, `r`, `F1`, and
 targeting configuration shows `TARGET CONFIG INVALID` instead of opening the
 grid. Short key labels work best in the grid overlay.
 
-### Timing Configuration
+### Window style constants
 
-```ahk
-Global FlashDuration := 800                  ; Flash message duration (milliseconds)
-Global DblClickTimeout := 400                ; Timeout for double-key commands (gg, dd, etc.)
-Global DebounceDelay := 50                   ; Debounce delay for window reflow (ms)
-Global DesktopSwitchDelay := 200             ; Delay after desktop switch before arranging (ms)
-Global DockUpdateDelay := 100                ; Delay for dock update after window change (ms)
-Global TooltipDuration := 1000               ; Tooltip display duration (ms)
-```
-
-### Window Style Constants
-
-```ahk
-Global TitleBarMask := 0x00C00000            ; Window style mask for title bar detection
-```
-
----
+Window style and message constants remain in `paper-vim.ahk`; they are not
+user settings.
 
 ## 🐛 Troubleshooting
 
@@ -555,9 +530,9 @@ Global TitleBarMask := 0x00C00000            ; Window style mask for title bar d
 
 ### Windows overlap the taskbar
 - The script auto-detects the taskbar edge and size. If your taskbar is unusual,
-  set `TaskbarMode` to `"left"`, `"top"`, `"right"`, or `"bottom"` and set
+  set `TaskbarMode=left`, `top`, `right`, or `bottom` in `[Layout]` and set
   `TaskbarSize` to the taskbar width or height in pixels
-- Use `TaskbarMode := "none"` to let windows use the whole screen
+- Use `TaskbarMode=none` to let windows use the whole screen
 
 ### Some windows don't work correctly
 - **System windows** like Task Manager, Windows Settings, and some OS dialogs may not respond to window management commands
