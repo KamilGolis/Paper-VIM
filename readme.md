@@ -122,8 +122,8 @@ easy to tell apart.
 - It is click-through and never takes keyboard focus.
 - It follows moves, resizes, focus changes, and width changes.
 - It is hidden in Off mode, while the help overlay is open, while the script is
-  suspended, in emergency mode, in Overlay Mode, and for maximized or fullscreen
-  windows.
+  suspended, in emergency mode, and for maximized or fullscreen windows. It stays
+  visible in Overlay Mode.
 - Like the rest of the layout, it currently follows the main-monitor limitation.
 
 ### Visual Dock
