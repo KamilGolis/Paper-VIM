@@ -32,6 +32,14 @@ splits that cell again.
 **Command mode**:
 The transient prompt opened with `:` from Normal mode. It accepts `w`, `q`, and `wq`.
 
+**Setting**:
+A user-facing value in `paper-vim.ini` or `config.ahk`. Runtime state such as
+window handles, GUI controls, and timers is not a setting.
+
+**Keymap**:
+The mapping from stable action names to AutoHotkey hotkey names, grouped by mode
+or context.
+
 **Active window**:
 The top-level window that currently receives keyboard input.
 
