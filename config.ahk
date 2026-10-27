@@ -347,25 +347,15 @@ UnquoteConfig(value) {
 ParseConfigValue(name, type, value) {
     if (type = "string")
         return value
-    if (type = "keys") {
-        keys := []
-        for part in StrSplit(value, ",", " ") {
-            part := Trim(part)
-            if (part = "")
-                continue
-            keys.Push(part)
-        }
-        if (keys.Length = 0)
-            ConfigFail(name " must contain at least one key")
-        return keys
-    }
-    if (type = "list") {
+    if (type = "keys" || type = "list") {
         items := []
         for part in StrSplit(value, ",", " ") {
             part := Trim(part)
             if (part != "")
                 items.Push(part)
         }
+        if (type = "keys" && items.Length = 0)
+            ConfigFail(name " must contain at least one key")
         return items
     }
     if (type = "bool") {

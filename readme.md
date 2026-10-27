@@ -127,7 +127,7 @@ Built-in floating rules cover:
 - class `MsiDialogCloseClass`
 - process `msiexec.exe`
 
-`Microsoft.CmdPal.UI.exe` (PowerToys Command Palette) is excluded by default.
+`Microsoft.CmdPal.UI.exe` (PowerToys Command Palette) floats by default.
 Add process names or window classes in `[Exclusions]`:
 
 ```ini
@@ -414,9 +414,11 @@ and a hidden target shows "WINDOW X NOT AVAILABLE".
 ## 🔍 How It Works
 
 ### Window Stack Management
-1. On startup, all existing visible windows with title bars are added to the stack
-2. New windows are automatically detected and added via Windows Shell Hook
-3. Closed or hidden windows are automatically removed; a visible window is
+1. On startup, eligible visible windows with title bars are added to the stack;
+   floating windows are skipped
+2. New eligible windows are automatically detected and added via Windows Shell Hook
+3. Closed or hidden windows are automatically removed; a visible floating window
+   is removed without being treated as closed, and a visible managed window is
    re-added when it is activated again
 4. Windows are laid out left to right in stack order, each with its remembered width
 5. The view offset scrolls only when the focused window would leave the screen,
@@ -506,9 +508,8 @@ The example file lists every setting and default:
 - `[Exclusions]` — process names and window classes that open as floating windows
 
 Values are parsed by type: integers, numbers, booleans (`true`/`false` or
-`1`/`0`), strings, comma-separated key lists, and comma-separated lists.
-Unknown sections or keys produce a warning; invalid values stop startup with an
-error.
+`1`/`0`), strings, and comma-separated lists (including key lists). Unknown
+sections or keys produce a warning; invalid values stop startup with an error.
 
 ### Keybindings
 

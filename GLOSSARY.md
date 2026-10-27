@@ -53,8 +53,9 @@ and has no focus border.
 _Avoid_: excluded window, ignored window
 
 **Exclusion rule**:
-A process-name or window-class match that makes a window floating when
-Paper-VIM adopts it.
+A built-in or configured condition that makes a window floating. Built-in rules
+cover owned windows and specific window classes and processes; configured rules
+match process names or window classes.
 
 **Focus border**:
 The visual outline that marks the active managed window.
