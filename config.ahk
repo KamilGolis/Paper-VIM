@@ -59,6 +59,8 @@ global TargetMinCellSize := 8
 global TargetGridRows := 2
 global TargetGridCols := 2
 global TargetGridKeys := ["h", "j", "k", "l"]
+global ExclusionProcesses := ["Microsoft.CmdPal.UI.exe"]
+global ExclusionClasses := []
 
 ; --- Default keymap ---
 ; Action names are stable; sections map to hotkey contexts.
@@ -244,6 +246,10 @@ global SettingsSchema := Map(
         "TargetGridRows", "int",
         "TargetGridCols", "int",
         "TargetGridKeys", "keys"
+    ),
+    "Exclusions", Map(
+        "Processes", "list",
+        "Classes", "list"
     )
 )
 
@@ -253,7 +259,7 @@ global ConfigWarnings := []
 ; Copy defaults into the live keymap before applying user overrides.
 LoadConfig() {
     global Keymap, DefaultKeymap, SettingsSchema, ConfigWarnings
-    global TargetGridKeys
+    global TargetGridKeys, ExclusionProcesses, ExclusionClasses
 
     ConfigWarnings := []
     Keymap := Map()
@@ -353,6 +359,15 @@ ParseConfigValue(name, type, value) {
             ConfigFail(name " must contain at least one key")
         return keys
     }
+    if (type = "list") {
+        items := []
+        for part in StrSplit(value, ",", " ") {
+            part := Trim(part)
+            if (part != "")
+                items.Push(part)
+        }
+        return items
+    }
     if (type = "bool") {
         if (value = "true" || value = "1")
             return true
@@ -374,7 +389,7 @@ ParseConfigValue(name, type, value) {
 }
 
 ApplySetting(section, key, value) {
-    global FullWidthRatio, FocusWidthRatio, Gap, BarHeight, EmergencyMargin, EmergencyMinWidth, EmergencyMinHeight, EmergencyMaxWidth, EmergencyMaxHeight, TaskbarMode, TaskbarSize, HUDBackgroundColor, DockBackgroundColor, NormalModeColor, VisualModeColor, InsertModeColor, TargetingModeColor, FlashMsgColor, SuspendedModeColor, ActiveIndicatorColor, DockInactiveNumberColor, FocusBorderEnabled, FocusBorderColor, FocusBorderThickness, FocusBorderUpdateInterval, FontFamily, HUDFontSize, HUDFontWeight, DockNumberFontSize, DockIconSize, DockIconSpacing, DockLeftCount, DockRightCount, DockMarginX, DockMarginY, DockPosY, DockNumberHeight, HUDMarginRight, HUDPosY, HUDWidth, FlashDuration, DblClickTimeout, DebounceDelay, DesktopSwitchDelay, DockUpdateDelay, TooltipDuration, TargetMinCellSize, TargetGridRows, TargetGridCols, TargetGridKeys
+    global FullWidthRatio, FocusWidthRatio, Gap, BarHeight, EmergencyMargin, EmergencyMinWidth, EmergencyMinHeight, EmergencyMaxWidth, EmergencyMaxHeight, TaskbarMode, TaskbarSize, HUDBackgroundColor, DockBackgroundColor, NormalModeColor, VisualModeColor, InsertModeColor, TargetingModeColor, FlashMsgColor, SuspendedModeColor, ActiveIndicatorColor, DockInactiveNumberColor, FocusBorderEnabled, FocusBorderColor, FocusBorderThickness, FocusBorderUpdateInterval, FontFamily, HUDFontSize, HUDFontWeight, DockNumberFontSize, DockIconSize, DockIconSpacing, DockLeftCount, DockRightCount, DockMarginX, DockMarginY, DockPosY, DockNumberHeight, HUDMarginRight, HUDPosY, HUDWidth, FlashDuration, DblClickTimeout, DebounceDelay, DesktopSwitchDelay, DockUpdateDelay, TooltipDuration, TargetMinCellSize, TargetGridRows, TargetGridCols, TargetGridKeys, ExclusionProcesses, ExclusionClasses
     switch (section "." key) {
         case "Layout.FullWidthRatio": FullWidthRatio := value
         case "Layout.FocusWidthRatio": FocusWidthRatio := value
@@ -426,6 +441,8 @@ ApplySetting(section, key, value) {
         case "Targeting.TargetGridRows": TargetGridRows := value
         case "Targeting.TargetGridCols": TargetGridCols := value
         case "Targeting.TargetGridKeys": TargetGridKeys := value
+        case "Exclusions.Processes": ExclusionProcesses := value
+        case "Exclusions.Classes": ExclusionClasses := value
     }
 }
 

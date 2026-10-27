@@ -1,6 +1,6 @@
 ; ==============================================================================
 ; Paper-VIM: Vim Keybindings + PaperWM Window Manager
-; Version: 1.8.1
+; Version: 1.9.1
 ; Author: KamilGolis
 ; Description: Combines vim-style navigation with PaperWM tiling window manager
 ; License: MIT
@@ -110,6 +110,11 @@ global TitleBarMask := 0x00C00000     ; Window style mask for title bar detectio
 global WS_POPUP := 0x80000000         ; Popup window style
 global WS_EX_TOOLWINDOW := 0x80       ; Tool window extended style
 global WS_EX_DLGMODALFRAME := 0x1     ; Dialog modal frame extended style
+
+; Windows that should float instead of join the tiling stack. The configured
+; process/class lists in paper-vim.ini are checked in addition to these.
+global BuiltinFloatingProcesses := ["msiexec.exe"]
+global BuiltinFloatingClasses := ["#32770", "MsiDialogCloseClass"]
 
 ; --- Window Message Constants ---
 global WM_GETICON := 0x007F           ; Get window icon message
@@ -1262,6 +1267,43 @@ IsCloaked(hwnd) {
     return cloaked != 0
 }
 
+; Check whether a window is floating: owned, an installer, a launcher, or an
+; explicitly configured process/class. Floating windows keep their own size and
+; position and stay out of the tiling stack.
+; @param hwnd - Window handle to check
+; @return True when the window should not be managed
+IsFloatingWindow(hwnd) {
+    global BuiltinFloatingProcesses, BuiltinFloatingClasses
+    global ExclusionProcesses, ExclusionClasses
+
+    ; Owned top-level windows are dialogs, palettes, or other transient UI.
+    if (DllCall("GetWindow", "Ptr", hwnd, "UInt", 4, "Ptr"))
+        return true
+
+    className := StrLower(WinGetClass(hwnd))
+    for name in BuiltinFloatingClasses {
+        if (className = StrLower(name))
+            return true
+    }
+    for name in ExclusionClasses {
+        if (className = StrLower(name))
+            return true
+    }
+
+    try processName := StrLower(WinGetProcessName(hwnd))
+    catch as err
+        return false
+    for name in BuiltinFloatingProcesses {
+        if (processName = StrLower(name))
+            return true
+    }
+    for name in ExclusionProcesses {
+        if (processName = StrLower(name))
+            return true
+    }
+    return false
+}
+
 ; Determines if a window should be managed by the tiling system
 ; @param hwnd - Window handle to check
 ; @return Boolean indicating if window should be managed
@@ -1297,6 +1339,10 @@ ShouldManageWindow(hwnd) {
         ; Exclude cloaked windows (windows on other virtual desktops, UWP
         ; host shells) so we never tile windows we cannot see
         if (IsCloaked(hwnd))
+            return false
+
+        ; Exclude owned windows, installers, launchers, and configured matches.
+        if (IsFloatingWindow(hwnd))
             return false
         
         ; Exclude specific Windows UI elements by class name
@@ -1522,14 +1568,15 @@ ReflowStack(centerActive := false) {
     }
     activeHwnd := WinActive("A")
     
-    ; Cleanup closed windows (iterate backwards over a captured count, so
-    ; removals don't shift the indices of elements still to be visited)
+    ; Cleanup closed or no-longer-managed windows (iterate backwards over a
+    ; captured count, so removals don't shift the indices of elements still to
+    ; be visited)
     activeRemoved := false
     n := WindowStack.Length
     loop n {
         idx := n - A_Index + 1
         try {
-            if (!IsStackWindow(WindowStack[idx])) {
+            if (!IsStackWindow(WindowStack[idx]) || !ShouldManageWindow(WindowStack[idx])) {
                 if (WindowStack[idx] == activeHwnd)
                     activeRemoved := true
                 ForgetWindowWidth(WindowStack[idx])
@@ -1743,10 +1790,10 @@ IsStackWindow(hwnd) {
     }
 }
 
-; Remove hidden or destroyed windows from the stack. A window can be managed
-; while visible and then hidden without being destroyed (for example, a
-; command palette). Leaving it in the stack reserves a layout slot and makes
-; the window row look wrong.
+; Remove hidden, destroyed, or no-longer-eligible windows from the stack. A
+; window can be managed while visible and then hidden without being destroyed
+; (for example, a command palette), or an exclusion can make it floating.
+; Leaving it in the stack reserves a layout slot and makes the row look wrong.
 PruneWindowStack() {
     global WindowStack
     if (LayoutFrozen())
@@ -1756,7 +1803,7 @@ PruneWindowStack() {
     n := WindowStack.Length
     loop n {
         idx := n - A_Index + 1
-        if (!IsStackWindow(WindowStack[idx])) {
+        if (!IsStackWindow(WindowStack[idx]) || !ShouldManageWindow(WindowStack[idx])) {
             ForgetWindowWidth(WindowStack[idx])
             WindowStack.RemoveAt(idx)
             changed := true

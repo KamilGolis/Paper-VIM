@@ -20,6 +20,7 @@ This script was born out of necessity. Unable to use Linux with my preferred set
 - **Direct Window Navigation**: Jump to any window by pressing its number (1-9)
 - **Multi-Desktop Support**: Automatic window arrangement across virtual desktops
 - **Smart Window Tracking**: Automatic management of new/closed windows with taskbar click support
+- **Floating Windows**: Installers, owned dialogs, and configured launchers stay out of the tiling stack
 - **Script Suspension**: Pause all window management with state preservation
 - **HUD Indicators**: Visual feedback for current mode, desktop, and suspension state
 - **Active Window Border**: A click-through cyan outline marks the active managed window
@@ -112,6 +113,31 @@ The 25/50/75 presets use niri-style edge scrolling.
 - **Ctrl+F**: Toggle Overlay Mode (all windows maximized with small gaps, stacked)
 - **Ctrl+T**: Toggle Windows Taskbar visibility (windows auto-resize to use available space)
 - **Ctrl+Shift+D**: Remove active window from managed stack
+
+### Floating Windows
+Some windows should not join the tiling stack: installers, modal dialogs,
+launchers, and owned windows. Paper-VIM leaves floating windows at their own size
+and position. They have no dock slot, receive no automatic reflow, and have no
+focus border.
+
+Built-in floating rules cover:
+
+- owned top-level windows
+- class `#32770`
+- class `MsiDialogCloseClass`
+- process `msiexec.exe`
+
+`Microsoft.CmdPal.UI.exe` (PowerToys Command Palette) is excluded by default.
+Add process names or window classes in `[Exclusions]`:
+
+```ini
+[Exclusions]
+Processes=Microsoft.CmdPal.UI.exe
+Classes=
+```
+
+`Processes` and `Classes` replace the configurable lists; the built-in rules stay
+active. Matching is case-insensitive.
 
 ### Active Window Border
 A 3 px cyan outline marks the active managed window, so two adjacent windows are
@@ -451,6 +477,10 @@ TargetGridRows=2
 TargetGridCols=2
 TargetGridKeys=h, j, k, l
 
+[Exclusions]
+Processes=Microsoft.CmdPal.UI.exe
+Classes=
+
 [Keys.Normal]
 Target=q
 
@@ -473,10 +503,12 @@ The example file lists every setting and default:
 - `[HUD]` — margins, position, width, flash duration
 - `[Timing]` — double-key timeout, reflow debounce, desktop, dock, and tooltip delays
 - `[Targeting]` — minimum cell size, rows, columns, and key list
+- `[Exclusions]` — process names and window classes that open as floating windows
 
 Values are parsed by type: integers, numbers, booleans (`true`/`false` or
-`1`/`0`), strings, and comma-separated key lists. Unknown sections or keys
-produce a warning; invalid values stop startup with an error.
+`1`/`0`), strings, comma-separated key lists, and comma-separated lists.
+Unknown sections or keys produce a warning; invalid values stop startup with an
+error.
 
 ### Keybindings
 
@@ -537,7 +569,9 @@ user settings.
 ### Some windows don't work correctly
 - **System windows** like Task Manager, Windows Settings, and some OS dialogs may not respond to window management commands
 - These windows often have special protections that prevent automated positioning
-- **Workaround**: Use **Ctrl+Shift+D** to remove them from the managed stack
+- Installers, owned dialogs, and PowerToys Command Palette open as floating windows automatically
+- Add other process names or window classes under `[Exclusions]`
+- **Workaround**: Use **Ctrl+Shift+D** to remove a managed window from the stack
 
 ### Dock shows blank/missing icons
 If the dock shows blank spaces or default icons instead of app icons:
