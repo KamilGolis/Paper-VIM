@@ -418,7 +418,8 @@ and a hidden target shows "WINDOW X NOT AVAILABLE".
 1. On startup, eligible visible windows with title bars are added to the stack;
    floating windows are skipped
 2. New eligible windows are automatically detected and inserted immediately after
-   the currently focused window
+   the last focused managed window. Shell surfaces such as the Start menu do not
+   replace that anchor.
 3. Closed or hidden windows are automatically removed; a visible floating window
    is removed without being treated as closed, and a visible managed window is
    re-added when it is activated again
