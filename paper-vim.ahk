@@ -1,6 +1,6 @@
 ; ==============================================================================
 ; Paper-VIM: Vim Keybindings + PaperWM Window Manager
-; Version: 1.9.1
+; Version: 1.10.0
 ; Author: KamilGolis
 ; Description: Combines vim-style navigation with PaperWM tiling window manager
 ; License: MIT
@@ -30,6 +30,8 @@ global TargetGridCellCount := TargetGridRows * TargetGridCols
 ; User-facing layout settings are defined in config.ahk.
 global WindowStack := []              ; Array of managed window handles
 global WindowWidths := Map()          ; Per-window width ratio (hwnd -> 0.25..1.0)
+global LastActiveHwnd := 0            ; Most recently activated top-level window
+global PreviousActiveHwnd := 0        ; Window focused before LastActiveHwnd
 global ViewOffset := 0                ; Horizontal scroll offset of the window row (px)
 global OverlayMode := false           ; Toggle between tiling and overlay (fullscreen) mode
 global TaskbarHidden := false         ; Track Windows taskbar visibility state
@@ -1191,8 +1193,17 @@ OnMessage(DllCall("RegisterWindowMessage", "Str", "SHELLHOOK"), ShellMessage)
 ; @param wParam - Message type (1=created, 2=destroyed, 4/32772=activated)
 ; @param lParam - Window handle
 ShellMessage(wParam, lParam, *) {
+    global LastActiveHwnd, PreviousActiveHwnd
+
     ; Keep the focus border current even when layout changes are frozen.
     UpdateFocusBorder()
+
+    ; Track focus before the layout-frozen early return so a later new window
+    ; still has a usable insertion anchor.
+    if (wParam = HSHELL_WINDOWACTIVATED) {
+        PreviousActiveHwnd := LastActiveHwnd
+        LastActiveHwnd := lParam
+    }
 
     ; Ignore all window events when layout is frozen
     if (LayoutFrozen())
@@ -1228,7 +1239,7 @@ DeferredReflow() {
 ; Add new window to management stack if it should be managed
 ; @param hwnd - Window handle to potentially manage
 ManageNewWindow(hwnd, requireVisible := false) {
-    global WindowWidths
+    global WindowWidths, LastActiveHwnd, PreviousActiveHwnd
     if (!hwnd || LayoutFrozen())
         return
     
@@ -1249,8 +1260,22 @@ ManageNewWindow(hwnd, requireVisible := false) {
     for item in WindowStack
         if (item == hwnd)
             return
-    
-    WindowStack.Push(hwnd)
+
+    ; Insert after the window that was focused before this new window. A
+    ; creation event may arrive before or after the activation event, so try
+    ; the previous focus first when the new window is already active.
+    anchor := LastActiveHwnd
+    if (!anchor || anchor == hwnd || GetStackIndex(anchor) == 0)
+        anchor := PreviousActiveHwnd
+    if (!anchor || anchor == hwnd || GetStackIndex(anchor) == 0)
+        anchor := WinActive("A")
+
+    anchorIndex := GetStackIndex(anchor)
+    if (anchorIndex > 0 && anchor != hwnd)
+        WindowStack.InsertAt(anchorIndex + 1, hwnd)
+    else
+        WindowStack.Push(hwnd)
+
     ; A newly created window starts at full width. Do not reset widths in
     ; InitializeExistingWindows: that path also runs on desktop switches and
     ; must preserve sizes the user has chosen.
@@ -1765,12 +1790,13 @@ GoToDesktop(Target) {
 ; Initialize windows on a desktop that hasn't been arranged yet
 ; @param DesktopNum - Desktop number to initialize
 InitializeDesktop(DesktopNum) {
-    global InitializedDesktops
+    global InitializedDesktops, LastActiveHwnd
     if (InitializedDesktops.Has(DesktopNum))
         return
 
     InitializeExistingWindows()
     InitializedDesktops[DesktopNum] := true
+    LastActiveHwnd := WinActive("A")
     FlashMessage("DESKTOP " . DesktopNum . " ARRANGED")
 }
 
@@ -2268,8 +2294,9 @@ RefreshWorkArea()
 ; Initialize existing windows on startup
 try {
     InitializeExistingWindows()
-    ; Mark current desktop as initialized
+    ; Mark current desktop as initialized and seed the insertion anchor.
     InitializedDesktops[CurrentDesktop] := true
+    LastActiveHwnd := WinActive("A")
 }
 catch as err {
     MsgBox("Failed to initialize windows on startup: " err.Message, "Warning", "Icon!")
