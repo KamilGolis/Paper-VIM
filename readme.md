@@ -128,7 +128,9 @@ Built-in floating rules cover:
 - class `MsiDialogCloseClass`
 - process `msiexec.exe`
 
-`Microsoft.CmdPal.UI.exe` (PowerToys Command Palette) floats by default.
+Apps with custom title bars are still managed when they have a title, a
+resizable frame, and the app-window flag. `Microsoft.CmdPal.UI.exe` (PowerToys
+Command Palette) floats by default.
 Add process names or window classes in `[Exclusions]`:
 
 ```ini

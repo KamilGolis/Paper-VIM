@@ -1,6 +1,6 @@
 ; ==============================================================================
 ; Paper-VIM: Vim Keybindings + PaperWM Window Manager
-; Version: 1.10.0
+; Version: 1.10.1
 ; Author: KamilGolis
 ; Description: Combines vim-style navigation with PaperWM tiling window manager
 ; License: MIT
@@ -111,7 +111,9 @@ global FlashTimer := 0                ; Timer handle of the current flash restor
 ; --- Window Style Constants ---
 global TitleBarMask := 0x00C00000     ; Window style mask for title bar detection (WS_CAPTION)
 global WS_POPUP := 0x80000000         ; Popup window style
+global WS_THICKFRAME := 0x00040000    ; Resizable window frame
 global WS_EX_TOOLWINDOW := 0x80       ; Tool window extended style
+global WS_EX_APPWINDOW := 0x00040000   ; App window extended style
 global WS_EX_DLGMODALFRAME := 0x1     ; Dialog modal frame extended style
 global GW_OWNER := 4                  ; GetWindow owner flag
 
@@ -1350,9 +1352,14 @@ ShouldManageWindow(hwnd) {
         style := WinGetStyle(hwnd)
         exStyle := WinGetExStyle(hwnd)
         
-        ; Must have a title bar (WS_CAPTION)
-        if (!(style & TitleBarMask))
-            return false
+        ; Most apps use WS_CAPTION. Modern apps with a custom title bar omit
+        ; it, but remain resizable, show in the taskbar, and have a title.
+        if (!(style & TitleBarMask)) {
+            if (!(style & WS_THICKFRAME) || !(exStyle & WS_EX_APPWINDOW))
+                return false
+            if (WinGetTitle(hwnd) = "")
+                return false
+        }
         
         ; Exclude popup windows
         if (style & WS_POPUP)
