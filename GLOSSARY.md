@@ -46,6 +46,17 @@ The top-level window that currently receives keyboard input.
 **Managed window**:
 A window in the tiling stack that Paper-VIM positions and tracks.
 
+**Floating window**:
+A visible top-level window that Paper-VIM leaves at its own size and position.
+It is not in the tiling stack, has no dock slot, receives no automatic reflow,
+and has no focus border.
+_Avoid_: excluded window, ignored window
+
+**Exclusion rule**:
+A built-in or configured condition that makes a window floating. Built-in rules
+cover owned windows and specific window classes and processes; configured rules
+match process names or window classes.
+
 **Focus border**:
 The visual outline that marks the active managed window.
 
