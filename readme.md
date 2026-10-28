@@ -20,6 +20,7 @@ This script was born out of necessity. Unable to use Linux with my preferred set
 - **Direct Window Navigation**: Jump to any window by pressing its number (1-9)
 - **Multi-Desktop Support**: Automatic window arrangement across virtual desktops
 - **Smart Window Tracking**: Automatic management of new/closed windows with taskbar click support
+- **Insert After Focus**: New windows open immediately after the currently focused window
 - **Floating Windows**: Installers, owned dialogs, and configured launchers stay out of the tiling stack
 - **Script Suspension**: Pause all window management with state preservation
 - **HUD Indicators**: Visual feedback for current mode, desktop, and suspension state
@@ -127,7 +128,9 @@ Built-in floating rules cover:
 - class `MsiDialogCloseClass`
 - process `msiexec.exe`
 
-`Microsoft.CmdPal.UI.exe` (PowerToys Command Palette) floats by default.
+Apps with custom title bars are still managed when they have a title, a
+resizable frame, and the app-window flag. `Microsoft.CmdPal.UI.exe` (PowerToys
+Command Palette) floats by default.
 Add process names or window classes in `[Exclusions]`:
 
 ```ini
@@ -416,7 +419,9 @@ and a hidden target shows "WINDOW X NOT AVAILABLE".
 ### Window Stack Management
 1. On startup, eligible visible windows with title bars are added to the stack;
    floating windows are skipped
-2. New eligible windows are automatically detected and added via Windows Shell Hook
+2. New eligible windows are automatically detected and inserted immediately after
+   the last focused managed window. Shell surfaces such as the Start menu do not
+   replace that anchor.
 3. Closed or hidden windows are automatically removed; a visible floating window
    is removed without being treated as closed, and a visible managed window is
    re-added when it is activated again

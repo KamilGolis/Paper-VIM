@@ -1,6 +1,6 @@
 ; ==============================================================================
 ; Paper-VIM: Vim Keybindings + PaperWM Window Manager
-; Version: 1.9.1
+; Version: 1.10.1
 ; Author: KamilGolis
 ; Description: Combines vim-style navigation with PaperWM tiling window manager
 ; License: MIT
@@ -30,6 +30,9 @@ global TargetGridCellCount := TargetGridRows * TargetGridCols
 ; User-facing layout settings are defined in config.ahk.
 global WindowStack := []              ; Array of managed window handles
 global WindowWidths := Map()          ; Per-window width ratio (hwnd -> 0.25..1.0)
+global LastActiveHwnd := 0            ; Most recently activated top-level window
+global PreviousActiveHwnd := 0        ; Window focused before LastActiveHwnd
+global LastFocusedManagedHwnd := 0    ; Last managed window that received focus
 global ViewOffset := 0                ; Horizontal scroll offset of the window row (px)
 global OverlayMode := false           ; Toggle between tiling and overlay (fullscreen) mode
 global TaskbarHidden := false         ; Track Windows taskbar visibility state
@@ -108,7 +111,9 @@ global FlashTimer := 0                ; Timer handle of the current flash restor
 ; --- Window Style Constants ---
 global TitleBarMask := 0x00C00000     ; Window style mask for title bar detection (WS_CAPTION)
 global WS_POPUP := 0x80000000         ; Popup window style
+global WS_THICKFRAME := 0x00040000    ; Resizable window frame
 global WS_EX_TOOLWINDOW := 0x80       ; Tool window extended style
+global WS_EX_APPWINDOW := 0x00040000   ; App window extended style
 global WS_EX_DLGMODALFRAME := 0x1     ; Dialog modal frame extended style
 global GW_OWNER := 4                  ; GetWindow owner flag
 
@@ -1191,8 +1196,20 @@ OnMessage(DllCall("RegisterWindowMessage", "Str", "SHELLHOOK"), ShellMessage)
 ; @param wParam - Message type (1=created, 2=destroyed, 4/32772=activated)
 ; @param lParam - Window handle
 ShellMessage(wParam, lParam, *) {
+    global LastActiveHwnd, PreviousActiveHwnd, LastFocusedManagedHwnd
+
     ; Keep the focus border current even when layout changes are frozen.
     UpdateFocusBorder()
+
+    ; Track focus before the layout-frozen early return so a later new window
+    ; still has a usable insertion anchor. Shell surfaces such as the Start
+    ; menu are not managed, so they must not replace the managed anchor.
+    if (wParam = HSHELL_WINDOWACTIVATED) {
+        PreviousActiveHwnd := LastActiveHwnd
+        LastActiveHwnd := lParam
+        if (GetStackIndex(lParam) > 0)
+            LastFocusedManagedHwnd := lParam
+    }
 
     ; Ignore all window events when layout is frozen
     if (LayoutFrozen())
@@ -1211,6 +1228,8 @@ ShellMessage(wParam, lParam, *) {
         ; and dock follow the focused window. Re-add a visible window that
         ; was removed from the stack while it was hidden.
         ManageNewWindow(lParam, true)
+        if (wParam = HSHELL_WINDOWACTIVATED && GetStackIndex(lParam) > 0)
+            LastFocusedManagedHwnd := lParam
         DeferredReflow()
     }
 }
@@ -1228,7 +1247,7 @@ DeferredReflow() {
 ; Add new window to management stack if it should be managed
 ; @param hwnd - Window handle to potentially manage
 ManageNewWindow(hwnd, requireVisible := false) {
-    global WindowWidths
+    global WindowWidths, LastActiveHwnd, PreviousActiveHwnd, LastFocusedManagedHwnd
     if (!hwnd || LayoutFrozen())
         return
     
@@ -1249,8 +1268,24 @@ ManageNewWindow(hwnd, requireVisible := false) {
     for item in WindowStack
         if (item == hwnd)
             return
-    
-    WindowStack.Push(hwnd)
+
+    ; Insert after the last managed window that had focus. A shell surface
+    ; such as the Start menu may take focus while an app launches, so it must
+    ; not become the anchor. Fall back to the immediate focus history.
+    anchor := LastFocusedManagedHwnd
+    if (!anchor || anchor == hwnd || GetStackIndex(anchor) == 0)
+        anchor := LastActiveHwnd
+    if (!anchor || anchor == hwnd || GetStackIndex(anchor) == 0)
+        anchor := PreviousActiveHwnd
+    if (!anchor || anchor == hwnd || GetStackIndex(anchor) == 0)
+        anchor := WinActive("A")
+
+    anchorIndex := GetStackIndex(anchor)
+    if (anchorIndex > 0 && anchor != hwnd)
+        WindowStack.InsertAt(anchorIndex + 1, hwnd)
+    else
+        WindowStack.Push(hwnd)
+
     ; A newly created window starts at full width. Do not reset widths in
     ; InitializeExistingWindows: that path also runs on desktop switches and
     ; must preserve sizes the user has chosen.
@@ -1317,9 +1352,14 @@ ShouldManageWindow(hwnd) {
         style := WinGetStyle(hwnd)
         exStyle := WinGetExStyle(hwnd)
         
-        ; Must have a title bar (WS_CAPTION)
-        if (!(style & TitleBarMask))
-            return false
+        ; Most apps use WS_CAPTION. Modern apps with a custom title bar omit
+        ; it, but remain resizable, show in the taskbar, and have a title.
+        if (!(style & TitleBarMask)) {
+            if (!(style & WS_THICKFRAME) || !(exStyle & WS_EX_APPWINDOW))
+                return false
+            if (WinGetTitle(hwnd) = "")
+                return false
+        }
         
         ; Exclude popup windows
         if (style & WS_POPUP)
@@ -1765,13 +1805,15 @@ GoToDesktop(Target) {
 ; Initialize windows on a desktop that hasn't been arranged yet
 ; @param DesktopNum - Desktop number to initialize
 InitializeDesktop(DesktopNum) {
-    global InitializedDesktops
+    global InitializedDesktops, LastActiveHwnd, LastFocusedManagedHwnd
     if (InitializedDesktops.Has(DesktopNum))
         return
 
     InitializeExistingWindows()
     InitializedDesktops[DesktopNum] := true
-    FlashMessage("DESKTOP " . DesktopNum . " ARRANGED")
+    LastActiveHwnd := WinActive("A")
+    LastFocusedManagedHwnd := GetStackIndex(LastActiveHwnd) > 0 ? LastActiveHwnd : 0
+    FlashMessage("DESKTOP " . DesktopNum " ARRANGED")
 }
 
 ; Get the 1-based position of a window in the stack
@@ -2268,8 +2310,10 @@ RefreshWorkArea()
 ; Initialize existing windows on startup
 try {
     InitializeExistingWindows()
-    ; Mark current desktop as initialized
+    ; Mark current desktop as initialized and seed the insertion anchor.
     InitializedDesktops[CurrentDesktop] := true
+    LastActiveHwnd := WinActive("A")
+    LastFocusedManagedHwnd := GetStackIndex(LastActiveHwnd) > 0 ? LastActiveHwnd : 0
 }
 catch as err {
     MsgBox("Failed to initialize windows on startup: " err.Message, "Warning", "Icon!")
