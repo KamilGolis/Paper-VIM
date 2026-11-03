@@ -1,6 +1,6 @@
 ; ==============================================================================
 ; Paper-VIM: Vim Keybindings + PaperWM Window Manager
-; Version: 1.10.1
+; Version: 1.11.0
 ; Author: KamilGolis
 ; Description: Combines vim-style navigation with PaperWM tiling window manager
 ; License: MIT
@@ -101,9 +101,26 @@ global DockSlotHwnds := []            ; Window handle currently shown in each sl
 global DockActiveUnderline := 0       ; Persistent active-slot underline
 global DockWidth := 0                 ; Cached auto-sized dock width
 global DockHeight := 0                ; Cached auto-sized dock height
-global DockShown := false             ; Dock window is currently visible
+global DockShown := false            ; Dock window is currently visible
 global DockShownX := 0                ; Last shown position
 global DockShownY := 0
+
+; --- Minimized Dock State ---
+; The minimized dock is next to the main dock and lists managed windows with
+; WinGetMinMax() = -1. Its numbers are separate from the main open-window
+; numbers. Controls are rebuilt only when the minimized window list changes.
+global MinDockGui := 0                ; Grey dock for minimized windows
+global MinDockHwnds := []             ; Handles currently shown in the min dock
+global MinDockWidth := 0              ; Cached width of the minimized dock
+global MinDockHeight := 0             ; Cached height of the minimized dock
+global MinDockShown := false          ; Minimized dock is currently visible
+global MinDockShownX := 0             ; Last shown position
+global MinDockShownY := 0
+
+; Last open/minimized lists seen by the dock refresh timer. Windows does not
+; send a shell hook for every minimize/restore, especially in the background.
+global DockRefreshOpen := []
+global DockRefreshMin := []
 
 ; --- HUD State ---
 global FlashTimer := 0                ; Timer handle of the current flash restore
@@ -436,8 +453,9 @@ BuildHelpText(currentMode) {
 
     rightLines := [
         "WINDOW MANAGEMENT",
-        "  n / Tab                 Next / previous window",
-        "  1-9                     Jump to window number",
+        "  n / Tab                 Next / previous open window",
+        "  1-9                     Jump to open window number",
+        "  Grey dock               Minimized windows (numbers separate)",
         "  Ctrl+H / Ctrl+L         Swap with left / right window",
         "  Ctrl+Shift+1/2/3        Width 25% / 50% / 75%",
         "  Ctrl+Shift+0            Full width (focus/peek)",
@@ -842,7 +860,7 @@ ResumeTargetingAfterHelp() {
 ; When suspended, all window management actions are paused
 ; Resume by pressing Ctrl+Q again or CapsLock to enter Vim mode
 ToggleSuspend() {
-    global Suspended, SuspendedState, OverlayMode, WindowStack, EmergencyMode, DockShown
+    global Suspended, SuspendedState, OverlayMode, WindowStack, EmergencyMode, DockShown, MinDockShown, MinDockGui
 
     ; Emergency mode is terminal for this session; restart to resume.
     if (EmergencyMode)
@@ -886,12 +904,15 @@ ToggleSuspend() {
         ; Show suspended notification
         UpdateHUD(VimMode)
         
-        ; Hide dock when suspended
+        ; Hide both docks when suspended
         try DockGui.Hide()
         catch as err {
             ; Ignore if dock doesn't exist
         }
+        if (IsSet(MinDockGui) && MinDockGui)
+            try MinDockGui.Hide()
         DockShown := false
+        MinDockShown := false
     } else {
         ; === RESUMING ===
         Suspended := false
@@ -924,56 +945,66 @@ ToggleSuspend() {
     }
 }
 
-; Update dock display with current window stack
-; Shows icons for windows around the active window with visual indicator
+; Update dock display with current open window stack. Minimized managed
+; windows are listed separately in the grey minimized dock.
 UpdateDock() {
-    global WindowStack, DockGui
+    global WindowStack, DockGui, MinDockGui
     global DockSlotPics, DockNumberCtrls, DockActiveUnderline, DockSlotHwnds, DockSlotCount
     global DockWidth, DockHeight, DockShown, DockShownX, DockShownY
     global DockIconSize, DockIconSpacing, DockLeftCount, DockRightCount, DockNumberHeight
     global DockMarginX, DockMarginY, WorkLeft, WorkTop, WorkWidth, DockPosY
+    global DockRefreshOpen, DockRefreshMin
     global ActiveIndicatorColor, DockInactiveNumberColor, DockNumberFontSize, FontFamily
 
     ; Keep the dock centered inside the usable area when the taskbar moves
     RefreshWorkArea()
 
-    ; No managed windows: hide the dock
-    if (WindowStack.Length == 0) {
+    openWindows := GetOpenWindows()
+    minimizedWindows := GetMinimizedWindows()
+    DockRefreshOpen := openWindows
+    DockRefreshMin := minimizedWindows
+
+    ; No open windows: hide the fixed five-slot dock. The minimized dock can
+    ; still be visible when every managed window is minimized.
+    if (openWindows.Length == 0) {
         try DockGui.Hide()
         DockShown := false
         DockSlotHwnds := []
         loop DockSlotCount
             DockSlotHwnds.Push(0)
+        try DockActiveUnderline.Visible := false
+        UpdateMinimizedDock(minimizedWindows, false)
+        RaiseOverlays()
         return
     }
 
-    ; Get active window
-    activeIndex := GetStackIndex(WinActive("A"))
-
-    ; Active window is not managed: keep the dock as it is
-    if (activeIndex == 0)
-        return
+    ; The main dock numbers open windows 1..N. A minimized active window has
+    ; no underline; use the first open window as the display center so the
+    ; fixed dock still has a stable position.
+    activeIndex := GetOpenIndex(WinActive("A"))
+    displayIndex := activeIndex ? activeIndex : 1
 
     ; Helper function to wrap index for circular navigation
-    WrapIndex(idx) {
+    WrapIndex(idx, count) {
         while (idx < 1)
-            idx += WindowStack.Length
-        while (idx > WindowStack.Length)
-            idx -= WindowStack.Length
+            idx += count
+        while (idx > count)
+            idx -= count
         return idx
     }
 
     ; Build the five visible slot indices: left, active, right.
     indices := []
     loop DockLeftCount
-        indices.Push(WrapIndex(activeIndex - DockLeftCount + A_Index - 1))
-    indices.Push(activeIndex)
+        indices.Push(WrapIndex(displayIndex - DockLeftCount + A_Index - 1, openWindows.Length))
+    indices.Push(displayIndex)
     loop DockRightCount
-        indices.Push(WrapIndex(activeIndex + A_Index))
+        indices.Push(WrapIndex(displayIndex + A_Index, openWindows.Length))
 
+    DockActiveUnderline.Visible := false
     xPos := 0
     for slot, idx in indices {
-        hwnd := WindowStack[idx]
+        hwnd := openWindows[idx]
 
         ; Only replace the icon when this slot changes windows. This avoids
         ; extracting and reloading every icon on every reflow.
@@ -986,7 +1017,7 @@ UpdateDock() {
         number := DockNumberCtrls[slot]
         number.Move(xPos, DockIconSize + 4, DockIconSize, DockNumberHeight)
         number.Value := idx
-        if (idx == activeIndex) {
+        if (activeIndex && idx == activeIndex) {
             number.SetFont(DockNumberFontSize " c" ActiveIndicatorColor, FontFamily)
             DockActiveUnderline.Move(xPos, DockIconSize + 2, DockIconSize, 2)
             DockActiveUnderline.Visible := true
@@ -1006,9 +1037,108 @@ UpdateDock() {
         DockShownY := dockY
     }
 
+    UpdateMinimizedDock(minimizedWindows, true)
+
     ; Keep the dock above the focus-border bars. Showing the dock does not
     ; necessarily put it above an existing topmost border bar.
     RaiseOverlays()
+}
+
+; Refresh the dock when the open/minimized lists change. This catches minimize
+; and restore actions that do not send an activation shell event, including
+; background windows. Nothing is reflowed when both lists are unchanged.
+RefreshDockState() {
+    global DockRefreshOpen, DockRefreshMin
+
+    if (Suspended || EmergencyMode)
+        return
+
+    openWindows := GetOpenWindows()
+    minimizedWindows := GetMinimizedWindows()
+    if (SameHwndList(DockRefreshOpen, openWindows)
+        && SameHwndList(DockRefreshMin, minimizedWindows))
+        return
+
+    DockRefreshOpen := openWindows
+    DockRefreshMin := minimizedWindows
+    DeferredReflow()
+}
+
+; Build the separate grey dock for minimized windows. The Picture controls are
+; disabled so Windows draws the icons greyed out; the number labels use the
+; inactive dock color. The GUI is rebuilt only when the minimized list changes.
+; @param windows - Array of minimized window handles in stack order
+BuildMinDock(windows) {
+    global MinDockGui, MinDockHwnds, MinDockWidth, MinDockHeight, MinDockShown
+    global DockBackgroundColor, DockMarginX, DockMarginY, DockIconSize, DockIconSpacing
+    global DockNumberHeight, DockNumberFontSize, DockInactiveNumberColor, FontFamily, DockHeight
+
+    if (IsSet(MinDockGui) && MinDockGui)
+        try MinDockGui.Destroy()
+
+    MinDockGui := Gui("+AlwaysOnTop -Caption +ToolWindow +LastFound")
+    MinDockGui.BackColor := DockBackgroundColor
+    WinSetTransColor(DockBackgroundColor, MinDockGui)
+    MinDockGui.MarginX := DockMarginX
+    MinDockGui.MarginY := DockMarginY
+    MinDockGui.SetFont(DockNumberFontSize " " DockInactiveNumberColor, FontFamily)
+
+    count := windows.Length
+    loop count {
+        x := (A_Index - 1) * (DockIconSize + DockIconSpacing)
+        MinDockGui.Add("Picture", "x" x " y0 w" DockIconSize " h" DockIconSize " +Disabled", GetGrayscaleIconPath(windows[A_Index]))
+        MinDockGui.Add("Text", "x" x " y" (DockIconSize + 4) " w" DockIconSize " h" DockNumberHeight " Center", A_Index)
+    }
+
+    MinDockWidth := DockMarginX * 2 + count * DockIconSize + (count - 1) * DockIconSpacing
+    MinDockHeight := DockHeight > 0 ? DockHeight : DockMarginY * 2 + DockIconSize + 4 + DockNumberHeight
+    MinDockHwnds := windows.Clone()
+    MinDockShown := false
+    MinDockGui.Hide()
+}
+
+; Show, position, or hide the minimized dock. It sits immediately to the right
+; of the main dock, or to the left when the right edge would overflow. When
+; there is no main dock, it is centered.
+; @param windows - Array of minimized window handles
+; @param mainVisible - Whether the main five-slot dock is visible
+UpdateMinimizedDock(windows, mainVisible) {
+    global MinDockGui, MinDockHwnds, MinDockWidth, MinDockHeight, MinDockShown
+    global MinDockShownX, MinDockShownY
+    global WorkLeft, WorkTop, WorkWidth, DockWidth, DockPosY, DockIconSpacing
+
+    if (!windows || windows.Length == 0) {
+        if (IsSet(MinDockGui) && MinDockGui)
+            try MinDockGui.Hide()
+        MinDockShown := false
+        MinDockHwnds := []
+        return
+    }
+
+    if (!IsSet(MinDockGui) || !MinDockGui || !SameHwndList(MinDockHwnds, windows))
+        BuildMinDock(windows)
+
+    if (mainVisible) {
+        mainX := WorkLeft + (WorkWidth - DockWidth) / 2
+        minX := mainX + DockWidth + DockIconSpacing
+        if (minX + MinDockWidth > WorkLeft + WorkWidth)
+            minX := mainX - DockIconSpacing - MinDockWidth
+    } else {
+        minX := WorkLeft + (WorkWidth - MinDockWidth) / 2
+    }
+
+    if (minX < WorkLeft)
+        minX := WorkLeft
+    if (minX + MinDockWidth > WorkLeft + WorkWidth)
+        minX := WorkLeft + WorkWidth - MinDockWidth
+    minY := WorkTop + DockPosY
+
+    if (!MinDockShown || minX != MinDockShownX || minY != MinDockShownY) {
+        MinDockGui.Show("NA x" minX " y" minY " w" MinDockWidth " h" MinDockHeight " NoActivate")
+        MinDockShown := true
+        MinDockShownX := minX
+        MinDockShownY := minY
+    }
 }
 
 ; Get icon path or handle for a window
@@ -1070,6 +1200,126 @@ GetWindowIconPath(hwnd) {
 
     ; Return default icon path if all else fails
     return A_WinDir "\System32\shell32.dll"  ; Default Windows icon
+}
+
+; Convert a window icon to a greyscale HICON for the minimized dock.
+; The color bitmap from GetIconInfo is desaturated in place, preserving the
+; icon's alpha channel and mask. Falls back to the normal icon if conversion
+; fails.
+; @param hwnd - Window handle
+; @return Icon path or HICON string with a grey icon
+GetGrayscaleIconPath(hwnd) {
+    source := GetWindowIconPath(hwnd)
+    fallback := SubStr(source, 1, 6) = "HICON:" ? A_WinDir "\System32\shell32.dll" : source
+    hIcon := 0
+    ownIcon := false
+    iconPath := ""
+
+    if (SubStr(source, 1, 6) = "HICON:") {
+        hIcon := SubStr(source, 7) + 0
+        ownIcon := true
+    } else {
+        iconPath := source
+        try {
+            large := 0, small := 0
+            DllCall("shell32\ExtractIconEx", "Str", iconPath, "Int", 0, "Ptr*", &large, "Ptr*", &small, "UInt", 1)
+            hIcon := large ? large : small
+            ownIcon := hIcon != 0
+        }
+    }
+
+    if (!hIcon)
+        return fallback
+
+    iconInfo := Buffer(32, 0)
+    if (!DllCall("GetIconInfo", "Ptr", hIcon, "Ptr", iconInfo)) {
+        if (ownIcon)
+            DllCall("DestroyIcon", "Ptr", hIcon)
+        return fallback
+    }
+
+    hbmColor := NumGet(iconInfo, 24, "Ptr")
+    hbmMask := NumGet(iconInfo, 16, "Ptr")
+    if (!hbmColor) {
+        DllCall("DeleteObject", "Ptr", hbmMask)
+        if (ownIcon)
+            DllCall("DestroyIcon", "Ptr", hIcon)
+        return fallback
+    }
+
+    bitmap := Buffer(32, 0)
+    if (!DllCall("GetObject", "Ptr", hbmColor, "Int", 32, "Ptr", bitmap)) {
+        DllCall("DeleteObject", "Ptr", hbmColor)
+        DllCall("DeleteObject", "Ptr", hbmMask)
+        if (ownIcon)
+            DllCall("DestroyIcon", "Ptr", hIcon)
+        return fallback
+    }
+
+    width := NumGet(bitmap, 4, "Int")
+    height := NumGet(bitmap, 8, "Int")
+    if (width < 1 || height < 1) {
+        DllCall("DeleteObject", "Ptr", hbmColor)
+        DllCall("DeleteObject", "Ptr", hbmMask)
+        if (ownIcon)
+            DllCall("DestroyIcon", "Ptr", hIcon)
+        return fallback
+    }
+
+    bitmapInfo := Buffer(40, 0)
+    NumPut("UInt", 40, bitmapInfo, 0)
+    NumPut("Int", width, bitmapInfo, 4)
+    NumPut("Int", height, bitmapInfo, 8)
+    NumPut("UShort", 1, bitmapInfo, 12)
+    NumPut("UShort", 32, bitmapInfo, 14)
+    NumPut("UInt", 0, bitmapInfo, 16)
+    NumPut("UInt", width * height * 4, bitmapInfo, 20)
+
+    pixels := Buffer(width * height * 4, 0)
+    hdc := DllCall("GetDC", "Ptr", 0, "Ptr")
+    got := 0
+    if (hdc)
+        got := DllCall("GetDIBits", "Ptr", hdc, "Ptr", hbmColor, "UInt", 0, "UInt", height, "Ptr", pixels, "Ptr", bitmapInfo, "UInt", 0)
+    if (hdc)
+        DllCall("ReleaseDC", "Ptr", 0, "Ptr", hdc)
+
+    if (!got) {
+        DllCall("DeleteObject", "Ptr", hbmColor)
+        DllCall("DeleteObject", "Ptr", hbmMask)
+        if (ownIcon)
+            DllCall("DestroyIcon", "Ptr", hIcon)
+        return fallback
+    }
+
+    loop width * height {
+        offset := (A_Index - 1) * 4
+        blue := NumGet(pixels, offset, "UChar")
+        green := NumGet(pixels, offset + 1, "UChar")
+        red := NumGet(pixels, offset + 2, "UChar")
+        grey := Round(0.299 * red + 0.587 * green + 0.114 * blue)
+        NumPut("UChar", grey, pixels, offset)
+        NumPut("UChar", grey, pixels, offset + 1)
+        NumPut("UChar", grey, pixels, offset + 2)
+    }
+
+    hdc := DllCall("GetDC", "Ptr", 0, "Ptr")
+    if (hdc)
+        DllCall("SetDIBits", "Ptr", hdc, "Ptr", hbmColor, "UInt", 0, "UInt", height, "Ptr", pixels, "Ptr", bitmapInfo, "UInt", 0)
+    if (hdc)
+        DllCall("ReleaseDC", "Ptr", 0, "Ptr", hdc)
+
+    grayInfo := Buffer(32, 0)
+    NumPut("Int", 1, grayInfo, 0)
+    NumPut("Ptr", hbmMask, grayInfo, 16)
+    NumPut("Ptr", hbmColor, grayInfo, 24)
+    hGray := DllCall("CreateIconIndirect", "Ptr", grayInfo, "Ptr")
+
+    DllCall("DeleteObject", "Ptr", hbmColor)
+    DllCall("DeleteObject", "Ptr", hbmMask)
+    if (ownIcon)
+        DllCall("DestroyIcon", "Ptr", hIcon)
+
+    return hGray ? "HICON:" hGray : source
 }
 
 ; Recalculate the usable screen area from the taskbar position.
@@ -1483,13 +1733,15 @@ IsFocusBorderCandidate(hwnd) {
 
 ; Keep the HUD and dock above the border bars after the bars are raised.
 RaiseOverlays() {
-    global VimGui, DockGui
+    global VimGui, DockGui, MinDockGui
     flags := 0x0001 | 0x0002 | 0x0010   ; NOSIZE | NOMOVE | NOACTIVATE
 
     if (IsSet(VimGui) && VimGui.Hwnd)
         try DllCall("SetWindowPos", "Ptr", VimGui.Hwnd, "Ptr", -1, "Int", 0, "Int", 0, "Int", 0, "Int", 0, "UInt", flags)
     if (IsSet(DockGui) && DockGui.Hwnd)
         try DllCall("SetWindowPos", "Ptr", DockGui.Hwnd, "Ptr", -1, "Int", 0, "Int", 0, "Int", 0, "Int", 0, "UInt", flags)
+    if (IsSet(MinDockGui) && MinDockGui)
+        try DllCall("SetWindowPos", "Ptr", MinDockGui.Hwnd, "Ptr", -1, "Int", 0, "Int", 0, "Int", 0, "Int", 0, "UInt", flags)
 }
 
 ; Position the four border bars around the visible window frame.
@@ -1640,26 +1892,25 @@ ReflowStack(centerActive := false) {
     }
 
     ; Find the active window after cleanup, so removed windows cannot leave
-    ; the index pointing at the wrong element
-    activeIndex := GetStackIndex(activeHwnd)
-
-    ; After cleanup, check if we still have windows
-    if (WindowStack.Length == 0) {
+    ; the index pointing at the wrong element. Minimized windows stay in
+    ; WindowStack but are not part of the open tiling row.
+    openWindows := GetOpenWindows()
+    if (openWindows.Length == 0) {
         ViewOffset := 0
-        WindowWidths.Clear()
         UpdateDock()
         Critical "Off"
         UpdateFocusBorder()
         return
     }
 
-    ; The active window is not in the stack
+    activeIndex := GetOpenIndex(activeHwnd)
     if (activeIndex == 0) {
         if (activeRemoved) {
             ; The active managed window was closed: hand focus to the first
-            ; window in the stack
+            ; open window, never to a minimized one.
             try {
-                WinActivate(WindowStack[1])
+                WinActivate(openWindows[1])
+                activeHwnd := openWindows[1]
                 activeIndex := 1
             } catch as err {
                 UpdateDock()
@@ -1668,9 +1919,10 @@ ReflowStack(centerActive := false) {
                 return
             }
         } else {
-            ; The active window is unmanaged (Start menu, dialog, popup):
-            ; keep the current layout instead of stealing focus. If it just
-            ; became floating, let the remaining stack reclaim its slot.
+            ; The active window is unmanaged (Start menu, dialog, popup), or
+            ; it is minimized. Keep the current layout instead of stealing
+            ; focus. If it just became floating, let the remaining stack
+            ; reclaim its slot.
             if (removedFloating)
                 DeferredReflow()
             UpdateDock()
@@ -1681,12 +1933,13 @@ ReflowStack(centerActive := false) {
     }
 
     if (OverlayMode) {
-        ; Fill the usable area, leaving one gap at each edge
+        ; Fill the usable area, leaving one gap at each edge. Minimized windows
+        ; stay minimized and are not restored by an overlay reflow.
         overlayLeft := WorkLeft + Gap
         overlayTop := WorkTop + Gap
         overlayWidth := Max(1, WorkWidth - (2 * Gap))
         overlayHeight := Max(1, WorkHeight - (2 * Gap))
-        for hwnd in WindowStack {
+        for hwnd in openWindows {
             try {
                 RestoreWindowNoActivate(hwnd)
                 WinMove(overlayLeft, overlayTop, overlayWidth, overlayHeight, hwnd)
@@ -1706,12 +1959,12 @@ ReflowStack(centerActive := false) {
         viewportWidth := WorkWidth - 2 * Gap
         peekMode := (GetWindowWidthRatio(activeHwnd) >= 0.9999)
 
-        ; Lay the stack out as a single row: each window keeps its own width,
-        ; and the row scrolls horizontally like niri's scrolling layout.
+        ; Lay the open windows out as a single row: each window keeps its own
+        ; width, and the row scrolls horizontally like niri's scrolling layout.
         widths := []
         lefts := []
         cursor := 0
-        for i, hwnd in WindowStack {
+        for i, hwnd in openWindows {
             widths.Push(GetWindowWidth(hwnd))
             lefts.Push(cursor)
             cursor += widths[i] + Gap
@@ -1737,17 +1990,12 @@ ReflowStack(centerActive := false) {
                 ViewOffset += (screenRight - rightEdge)
         }
 
-        for i, hwnd in WindowStack {
-            ; WinMove cannot move minimized windows; they keep their old
-            ; position and are repositioned by the reflow triggered when
-            ; they are restored. A maximized window must be restored first:
-            ; moving it while maximized leaves it in a maximized state at a
-            ; tiled rectangle, which also hides the focus border.
+        for i, hwnd in openWindows {
+            ; A maximized window must be restored first: moving it while
+            ; maximized leaves it in a maximized state at a tiled rectangle,
+            ; which also hides the focus border.
             try {
-                minMax := WinGetMinMax(hwnd)
-                if (minMax = -1)
-                    continue
-                if (minMax = 1)
+                if (WinGetMinMax(hwnd) = 1)
                     RestoreWindowNoActivate(hwnd)
             }
             catch as err
@@ -1826,6 +2074,65 @@ GetStackIndex(hwnd) {
         if (item == hwnd)
             return i
     return 0
+}
+
+; True when the window is minimized.
+; @param hwnd - Window handle
+IsMinimizedWindow(hwnd) {
+    if (!hwnd || !WinExist("ahk_id " hwnd))
+        return false
+    try return WinGetMinMax("ahk_id " hwnd) = -1
+    catch as err
+        return false
+}
+
+; Managed windows that are open, in stack order. Minimized and floating
+; windows are excluded from the tiling row, cycling, and main dock numbering.
+; @return Array of window handles
+GetOpenWindows() {
+    open := []
+    for hwnd in WindowStack {
+        if (IsStackWindow(hwnd) && !IsMinimizedWindow(hwnd) && !IsFloatingWindow(hwnd))
+            open.Push(hwnd)
+    }
+    return open
+}
+
+; Managed minimized windows, in stack order, for the grey dock.
+; @return Array of window handles
+GetMinimizedWindows() {
+    minimized := []
+    for hwnd in WindowStack {
+        if (IsStackWindow(hwnd) && IsMinimizedWindow(hwnd) && !IsFloatingWindow(hwnd))
+            minimized.Push(hwnd)
+    }
+    return minimized
+}
+
+; Get the 1-based position of a window in the open-window list.
+; @param hwnd - Window handle
+; @return Position among open windows, or 0 when not open and managed
+GetOpenIndex(hwnd) {
+    if (!hwnd)
+        return 0
+    for i, item in GetOpenWindows()
+        if (item == hwnd)
+            return i
+    return 0
+}
+
+; Compare two arrays of window handles in order.
+; @param left - First array
+; @param right - Second array
+; @return True when both contain the same handles in the same order
+SameHwndList(left, right) {
+    if (left.Length != right.Length)
+        return false
+    loop left.Length {
+        if (left[A_Index] != right[A_Index])
+            return false
+    }
+    return true
 }
 
 ; True when a window still exists and is visible on the desktop.
@@ -1933,7 +2240,7 @@ CenterActiveWindow() {
     FlashMessage("CENTERED")
 }
 
-; Cycle through window stack
+; Cycle through open windows in stack order
 ; @param direction - Direction to cycle (1=next, -1=previous)
 CycleStack(direction) {
     ; Don't cycle when layout is frozen
@@ -1944,29 +2251,30 @@ CycleStack(direction) {
     ; land on a hidden command-palette or tray window and leave no visible focus.
     PruneWindowStack()
 
-    if (WindowStack.Length <= 1)
+    openWindows := GetOpenWindows()
+    if (openWindows.Length <= 1)
         return
 
-    activeIndex := GetStackIndex(WinActive("A"))
-
-    if (activeIndex == 0)
-        return
-
-    newIndex := activeIndex
-    loop WindowStack.Length - 1 {
-        newIndex += direction
-        if (newIndex < 1)
-            newIndex := WindowStack.Length
-        else if (newIndex > WindowStack.Length)
-            newIndex := 1
-        if (IsStackWindow(WindowStack[newIndex]))
-            break
+    activeHwnd := WinActive("A")
+    activeIndex := GetOpenIndex(activeHwnd)
+    if (activeIndex == 0) {
+        ; If the focused window was just minimized, start at the first open
+        ; window for n, or the last open window for Tab.
+        if (!IsMinimizedWindow(activeHwnd))
+            return
+        activeIndex := direction > 0 ? 0 : openWindows.Length + 1
     }
+
+    newIndex := activeIndex + direction
+    if (newIndex < 1)
+        newIndex := openWindows.Length
+    else if (newIndex > openWindows.Length)
+        newIndex := 1
 
     if (newIndex == activeIndex)
         return
 
-    try WinActivate(WindowStack[newIndex])
+    try WinActivate(openWindows[newIndex])
     catch as err
         ; Failed to activate window
         return
@@ -1976,19 +2284,22 @@ CycleStack(direction) {
     SetTimer(() => UpdateDock(), -DockUpdateDelay)
 }
 
-; Switch to window by index in stack
-; @param index - Window index (1-based)
+; Switch to a window by its position among open managed windows.
+; Minimized windows have their own grey-dock numbers and are not selected here.
+; @param index - Open-window index (1-based)
 GoToWindowByIndex(index) {
+    global WindowStack
     ; Don't switch windows when layout is frozen
     if (LayoutFrozen())
         return
     
-    if (WindowStack.Length == 0 || index < 1 || index > WindowStack.Length) {
+    openWindows := GetOpenWindows()
+    if (openWindows.Length == 0 || index < 1 || index > openWindows.Length) {
         FlashMessage("WINDOW " . index . " NOT FOUND")
         return
     }
 
-    target := WindowStack[index]
+    target := openWindows[index]
     if (!IsStackWindow(target)) {
         FlashMessage("WINDOW " . index . " NOT AVAILABLE")
         return
@@ -2132,7 +2443,7 @@ ToggleTaskbar() {
 ; off-screen or behind each other in an unreachable horizontal row.
 EmergencyLayout() {
     global WindowStack, WorkLeft, WorkTop, WorkWidth, WorkHeight
-    global VimGui, DockGui, HelpGui, HelpVisible, DockShown
+    global VimGui, DockGui, MinDockGui, HelpGui, HelpVisible, DockShown, MinDockShown
     global EmergencyMargin, EmergencyMinWidth, EmergencyMinHeight
     global EmergencyMaxWidth, EmergencyMaxHeight
 
@@ -2145,7 +2456,10 @@ EmergencyLayout() {
         try VimGui.Hide()
     if (IsSet(DockGui))
         try DockGui.Hide()
+    if (IsSet(MinDockGui) && MinDockGui)
+        try MinDockGui.Hide()
     DockShown := false
+    MinDockShown := false
     if (IsSet(HelpGui))
         try HelpGui.Hide()
     try HideFocusBorder()
@@ -2209,7 +2523,7 @@ EmergencyOnError(err, mode) {
 OnExit(CleanupAndExit)
 
 CleanupAndExit(ExitReason, ExitCode) {
-    global EmergencyMode
+    global EmergencyMode, MinDockGui
 
     ; Release the Targeting keyboard hook and overlays before exiting.
     try StopTargetHook()
@@ -2230,6 +2544,13 @@ CleanupAndExit(ExitReason, ExitCode) {
     try DockGui.Destroy()
     catch as err {
         ; Already destroyed
+    }
+
+    if (IsSet(MinDockGui) && MinDockGui) {
+        try MinDockGui.Destroy()
+        catch as err {
+            ; Already destroyed
+        }
     }
 
     try HelpGui.Destroy()
@@ -2326,6 +2647,9 @@ SetTimer(UpdateFocusBorder, FocusBorderUpdateInterval)
 ; Remove windows that were hidden without being destroyed. Without this, a
 ; hidden window keeps a layout slot and pushes later windows off-screen.
 SetTimer(PruneWindowStack, 500)
+
+; Catch minimize/restore changes that do not produce an activation shell event.
+SetTimer(RefreshDockState, 250)
 
 ; Toggle Vim mode with CapsLock
 CapsLock:: {

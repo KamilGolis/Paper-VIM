@@ -16,8 +16,8 @@ This script was born out of necessity. Unable to use Linux with my preferred set
 - **Dynamic Work Area**: Windows respect the taskbar edge and size, including left, right, top, and bottom docks
 - **Taskbar Toggle**: Hide/show Windows taskbar with automatic window reflow
 - **Taskbar Auto-Detection**: Reads the taskbar rect with `SHAppBarMessage`; `TaskbarMode`/`TaskbarSize` are manual overrides
-- **Visual Window Dock**: Live icon preview showing your window stack position with numbered indicators
-- **Direct Window Navigation**: Jump to any window by pressing its number (1-9)
+- **Visual Window Dock**: Live icon preview for open windows, plus a grey dock for minimized windows
+- **Direct Window Navigation**: Jump to any open window by pressing its number (1-9)
 - **Multi-Desktop Support**: Automatic window arrangement across virtual desktops
 - **Smart Window Tracking**: Automatic management of new/closed windows with taskbar click support
 - **Insert After Focus**: New windows open immediately after the currently focused window
@@ -54,9 +54,9 @@ This script was born out of necessity. Unable to use Linux with my preferred set
 - **m** (Normal): Enter Targeting; press one cell key to move the pointer; Esc exits
 
 ### Window Navigation
-- **n**: Next window in stack
-- **Tab**: Previous window in stack
-- **1-9**: Jump directly to window at that position in stack
+- **n**: Next open window
+- **Tab**: Previous open window
+- **1-9**: Jump directly to open window at that number
 - **z**: Reflow/refresh window layout
 - **Ctrl+Q**: Suspend/resume script (preserves window state)
 - **Ctrl+T**: Toggle taskbar visibility (windows auto-resize)
@@ -103,9 +103,9 @@ Full-width windows stay centered so both peeks remain visible while you navigate
 The 25/50/75 presets use niri-style edge scrolling.
 
 ### Stack Operations
-- **n**: Cycle to next window (right)
-- **Tab**: Cycle to previous window (left)
-- **1-9**: Jump directly to window at position 1-9 in stack
+- **n**: Cycle to the next open window (right)
+- **Tab**: Cycle to the previous open window (left)
+- **1-9**: Jump directly to open window 1-9
 - **Ctrl+H**: Swap current window with the one on its left
 - **Ctrl+L**: Swap current window with the one on its right
 - **z**: Manually reflow/refresh window positions
@@ -156,26 +156,36 @@ easy to tell apart.
 - Like the rest of the layout, it currently follows the main-monitor limitation.
 
 ### Visual Dock
-A transparent dock at the top-center of your screen shows:
-- **Five icon slots** in stack order; slots wrap when fewer than five windows are managed
-- **Window numbers** below each icon (shows position in stack)
+A transparent main dock at the top-center of your screen shows open windows:
+- **Five icon slots** in open-window order; slots wrap when fewer than five open windows are managed
+- **Window numbers** below each icon (position among open windows)
 - **Center icon** (underlined in green): Current active window with bright green number
-- **Left 2 icons**: Previous windows (press `Tab` to go left) with gray numbers
-- **Right 2 icons**: Next windows (press `n` to go right) with gray numbers
-- **Infinite scrolling**: Icons wrap around at stack edges
-- **Direct access**: Press the number shown to jump to that window
+- **Left 2 icons**: Previous open windows (press `Tab` to go left) with gray numbers
+- **Right 2 icons**: Next open windows (press `n` to go right) with gray numbers
+- **Infinite scrolling**: Icons wrap around at open-window edges
+- **Direct access**: Press the number shown to jump to that open window
 
-Example: With windows [1,2,3,4,5], if you're on window 3:
-```
-Dock shows: [1] [2] [3̲] [4] [5]
-Numbers:     1   2   3   4   5
-            (gray)(gray)(green)(gray)(gray)
-```
+Minimized windows move to a **grey dock immediately to the right** of the main
+dock:
+- Every minimized managed window gets an icon, with no five-slot limit
+- Icons and numbers are greyed out
+- Numbers are separate from the main dock: minimized windows are numbered
+  1..M in stack order
+- Minimized numbers are display-only for now; `1-9` still address open windows
+- The grey dock moves left of the main dock when it would overflow the work
+  area
+- If every managed window is minimized, the main dock is hidden and the grey
+  dock is centered
 
-If you're on window 5:
+Example with seven managed windows: five open and two minimized (stack
+positions 3 and 6):
+
 ```
-Dock shows: [3] [4] [5̲] [1] [2]
-Numbers:     3   4   5   1   2
+Main dock:       [1] [2] [3̲] [4] [5]
+Open numbers:     1   2   3   4   5
+
+Grey dock:       [1] [2]
+Minimized:        1   2
 ```
 
 ---
@@ -373,19 +383,20 @@ are application shortcuts, not Vim commands: in a browser, `:w` opens
 ### Window Navigation by Number (Normal Mode Only)
 | Key | Action |
 |-----|--------|
-| **1** | Jump to window #1 in stack |
-| **2** | Jump to window #2 in stack |
-| **3** | Jump to window #3 in stack |
-| **4** | Jump to window #4 in stack |
-| **5** | Jump to window #5 in stack |
-| **6** | Jump to window #6 in stack |
-| **7** | Jump to window #7 in stack |
-| **8** | Jump to window #8 in stack |
-| **9** | Jump to window #9 in stack |
+| **1** | Jump to open window #1 |
+| **2** | Jump to open window #2 |
+| **3** | Jump to open window #3 |
+| **4** | Jump to open window #4 |
+| **5** | Jump to open window #5 |
+| **6** | Jump to open window #6 |
+| **7** | Jump to open window #7 |
+| **8** | Jump to open window #8 |
+| **9** | Jump to open window #9 |
 
-**Note**: Numbers correspond to the position shown in the dock. The flash
-message confirms "WINDOW X"; an out-of-range number shows "WINDOW X NOT FOUND",
-and a hidden target shows "WINDOW X NOT AVAILABLE".
+**Note**: Numbers correspond to open windows, in stack order. Minimized windows
+are numbered separately in the grey dock and do not consume these numbers. The
+flash message confirms "WINDOW X"; an out-of-range number shows "WINDOW X NOT
+FOUND", and a hidden target shows "WINDOW X NOT AVAILABLE".
 
 ---
 
@@ -404,13 +415,15 @@ and a hidden target shows "WINDOW X NOT AVAILABLE".
 
 ### Window Dock (Top-Center)
 - **Always visible** when windows are managed (hidden when suspended)
+- **Main dock**: Five fixed slots for open windows
+- **Minimized dock**: Grey dock next to the main dock, with one icon per minimized window and no fixed limit
 - **Transparent background**
-- **Green underline**: Current active window
-- **Window numbers**: Below each icon showing stack position
-- **Active window number**: Bright green
-- **Inactive window numbers**: Gray
-- **Centered on the work area**: The dock measures its real auto-sized width
-- **Updates automatically** when navigating/closing windows
+- **Green underline**: Current active open window
+- **Window numbers**: Below each icon
+- **Active window number**: Bright green in the main dock
+- **Inactive and minimized numbers**: Gray
+- **Centered main dock**: The main dock measures its real auto-sized width
+- **Updates automatically** when navigating, minimizing, restoring, or closing windows
 
 ---
 
@@ -425,11 +438,14 @@ and a hidden target shows "WINDOW X NOT AVAILABLE".
 3. Closed or hidden windows are automatically removed; a visible floating window
    is removed without being treated as closed, and a visible managed window is
    re-added when it is activated again
-4. Windows are laid out left to right in stack order, each with its remembered width
-5. The view offset scrolls only when the focused window would leave the screen,
+4. Minimized windows stay in the stack with their remembered width, but leave
+   the open tiling row, `n`/`Tab` cycle, and main dock numbering
+5. Open windows are laid out left to right in stack order, each with its
+   remembered width
+6. The view offset scrolls only when the focused window would leave the screen,
    matching niri's `center-focused-column "never"` behavior
-6. **Taskbar click support**: Clicking a window in the taskbar properly activates and focuses it
-7. **Suspension handling**: When suspended, all window events are ignored and state is preserved
+7. **Taskbar click support**: Clicking a window in the taskbar properly activates and focuses it
+8. **Suspension handling**: When suspended, all window events are ignored and state is preserved
 
 ### Dynamic Work Area
 - The script detects the taskbar edge and size with `SHAppBarMessage(ABM_GETTASKBARPOS)`
@@ -587,8 +603,16 @@ If the dock shows blank spaces or default icons instead of app icons:
 - **Alternative**: Accept that some system windows will show default icons in the dock
 
 ### Dock repeats icons with fewer than five windows
-- The dock always fills five slots and wraps around the stack, so an icon can
-  repeat when fewer than five windows are managed. This is expected.
+- The main dock always fills five slots and wraps around the open-window list,
+  so an icon can repeat when fewer than five open windows are managed. This is
+  expected.
+- Minimized windows are not part of that repetition; they appear once each in
+  the grey dock.
+
+### Minimized windows are not in the main dock
+- This is intentional. Minimized windows keep their stack position and width,
+  but move to the grey dock and are skipped by `n`/`Tab` and `1-9`.
+- Restore a window from the taskbar to return it to the open row and main dock.
 
 ### Vim mode stuck on
 - Press **CapsLock** to toggle off

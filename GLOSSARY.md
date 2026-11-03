@@ -57,6 +57,19 @@ A built-in or configured condition that makes a window floating. Built-in rules
 cover owned windows and specific window classes and processes; configured rules
 match process names or window classes.
 
+**Open window**:
+A managed window that is not minimized and not floating. Open windows form the
+tiling row and the main dock, and `n`, `Tab`, and `1-9` use their order.
+
+**Minimized window**:
+A managed window with `WinGetMinMax()` equal to -1. It keeps its stack position
+and remembered width, but leaves the tiling row and main dock. It is skipped by
+`n`/`Tab` and shown in the grey minimized dock.
+
+**Minimized dock**:
+The grey dock next to the main dock. It lists every minimized managed window in
+stack order and numbers them separately from the open windows.
+
 **Focus border**:
 The visual outline that marks the active managed window.
 
