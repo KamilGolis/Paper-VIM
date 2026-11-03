@@ -1,6 +1,6 @@
 ; ==============================================================================
 ; Paper-VIM: Vim Keybindings + PaperWM Window Manager
-; Version: 1.13.0
+; Version: 1.13.1
 ; Author: KamilGolis
 ; Description: Combines vim-style navigation with PaperWM tiling window manager
 ; License: MIT
@@ -3030,7 +3030,7 @@ SC027:: return ; ';' is swallowed; use ':' for command mode
     targetHwnd := WinActive("A")
     prevVimMode := VimMode
     UpdateHUD(0)
-    Result := InputBox("Command: w (save), q (quit), wq (save & quit)", "Vim Command", "h80 w300")
+    Result := InputBox("Command: w (save), q (quit), wq (save & quit)", "Vim Command", "h120 w400")
     if (Result.Result = "OK") {
         val := Trim(StrLower(Result.Value))
         if (SubStr(val, 1, 1) == ":")
@@ -3299,7 +3299,7 @@ RunKeyAction(context, action, *) {
             targetHwnd := WinActive("A")
             prevVimMode := VimMode
             UpdateHUD(0)
-            Result := InputBox("Command: w (save), q (quit), wq (save & quit)", "Vim Command", "h80 w300")
+            Result := InputBox("Command: w (save), q (quit), wq (save & quit)", "Vim Command", "h120 w400")
             if (Result.Result = "OK") {
                 val := Trim(StrLower(Result.Value))
                 if (SubStr(val, 1, 1) == ":")
