@@ -106,6 +106,8 @@ The 25/50/75 presets use niri-style edge scrolling.
 - **n**: Cycle to the next open window (right)
 - **Tab**: Cycle to the previous open window (left)
 - **1-9**: Jump directly to open window 1-9
+- **Ctrl+M**: Minimize the focused open window
+- **Ctrl+1..9**: Restore minimized window 1-9 to the main dock
 - **Ctrl+H**: Swap current window with the one on its left
 - **Ctrl+L**: Swap current window with the one on its right
 - **z**: Manually reflow/refresh window positions
@@ -157,7 +159,7 @@ easy to tell apart.
 
 ### Visual Dock
 A transparent main dock at the top-center of your screen shows open windows:
-- **Five icon slots** in open-window order; slots wrap when fewer than five open windows are managed
+- **Nine icon slots** in open-window order; slots wrap when fewer than nine open windows are managed
 - **Window numbers** below each icon (position among open windows)
 - **Center icon** (underlined in green): Current active window with bright green number
 - **Left 2 icons**: Previous open windows (press `Tab` to go left) with gray numbers
@@ -167,11 +169,12 @@ A transparent main dock at the top-center of your screen shows open windows:
 
 Minimized windows move to a **grey dock immediately to the right** of the main
 dock:
-- Every minimized managed window gets an icon, with no five-slot limit
+- Every minimized managed window gets an icon, with no fixed limit
 - Icons and numbers are greyed out
 - Numbers are separate from the main dock: minimized windows are numbered
   1..M in stack order
-- Minimized numbers are display-only for now; `1-9` still address open windows
+- The first nine minimized windows are numbered and can be restored with
+  `Ctrl+1` through `Ctrl+9`; later icons have no numbers
 - **Spacing**: `DockMinimizedPadding` sets the gap from the main dock in pixels
   (default 24)
 - The grey dock moves left of the main dock when it would overflow the work
@@ -179,16 +182,15 @@ dock:
 - If every managed window is minimized, the main dock is hidden and the grey
   dock is centered
 
-Example with seven managed windows: five open and two minimized (stack
-positions 3 and 6):
+Example with nine open windows, active window 3:
 
 ```
-Main dock:       [1] [2] [3̲] [4] [5]
-Open numbers:     1   2   3   4   5
-
-Grey dock:       [1] [2]
-Minimized:        1   2
+Main dock:       [1] [2] [3̲] [4] [5] [6] [7] [8] [9]
+Open numbers:     1   2   3   4   5   6   7   8   9
 ```
+
+Minimized windows are not part of this main dock; they get separate `1..M`
+numbers in the grey dock.
 
 ---
 
@@ -197,7 +199,7 @@ Minimized:        1   2
 ### Desktop Navigation
 - **Ctrl+J**: Switch to previous virtual desktop
 - **Ctrl+K**: Switch to next virtual desktop
-- **Ctrl+1** through **Ctrl+5**: Jump directly to desktop 1-5
+- **Ctrl+Alt+1** through **Ctrl+Alt+5**: Jump directly to desktop 1-5
 
 ### Auto-Arrangement
 - On startup, arranges all windows on your current desktop
@@ -417,7 +419,7 @@ FOUND", and a hidden target shows "WINDOW X NOT AVAILABLE".
 
 ### Window Dock (Top-Center)
 - **Always visible** when windows are managed (hidden when suspended)
-- **Main dock**: Five fixed slots for open windows
+- **Main dock**: Nine fixed slots for open windows
 - **Minimized dock**: Grey dock next to the main dock, with one icon per minimized window and no fixed limit
 - **Transparent background**
 - **Green underline**: Current active open window
@@ -605,9 +607,9 @@ If the dock shows blank spaces or default icons instead of app icons:
 - **Solution**: Run the script as administrator (right-click → "Run as administrator")
 - **Alternative**: Accept that some system windows will show default icons in the dock
 
-### Dock repeats icons with fewer than five windows
-- The main dock always fills five slots and wraps around the open-window list,
-  so an icon can repeat when fewer than five open windows are managed. This is
+### Dock repeats icons with fewer than nine windows
+- The main dock always fills nine slots and wraps around the open-window list,
+  so an icon can repeat when fewer than nine open windows are managed. This is
   expected.
 - Minimized windows are not part of that repetition; they appear once each in
   the grey dock.

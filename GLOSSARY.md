@@ -68,7 +68,8 @@ and remembered width, but leaves the tiling row and main dock. It is skipped by
 
 **Minimized dock**:
 The grey dock next to the main dock. It lists every minimized managed window in
-stack order and numbers them separately from the open windows.
+stack order. The first nine get numbers and can be restored with `Ctrl+1..9`;
+later icons remain unnumbered.
 
 **Focus border**:
 The visual outline that marks the active managed window.

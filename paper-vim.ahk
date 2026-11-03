@@ -1,6 +1,6 @@
 ; ==============================================================================
 ; Paper-VIM: Vim Keybindings + PaperWM Window Manager
-; Version: 1.11.1
+; Version: 1.12.0
 ; Author: KamilGolis
 ; Description: Combines vim-style navigation with PaperWM tiling window manager
 ; License: MIT
@@ -455,7 +455,8 @@ BuildHelpText(currentMode) {
         "WINDOW MANAGEMENT",
         "  n / Tab                 Next / previous open window",
         "  1-9                     Jump to open window number",
-        "  Grey dock               Minimized windows (numbers separate)",
+        "  Ctrl+M                  Minimize focused window",
+        "  Ctrl+1-9                Restore minimized window 1-9",
         "  Ctrl+H / Ctrl+L         Swap with left / right window",
         "  Ctrl+Shift+1/2/3        Width 25% / 50% / 75%",
         "  Ctrl+Shift+0            Full width (focus/peek)",
@@ -467,7 +468,7 @@ BuildHelpText(currentMode) {
         "",
         "VIRTUAL DESKTOPS",
         "  Ctrl+J / Ctrl+K         Previous / next desktop",
-        "  Ctrl+1-5                Jump to desktop 1-5",
+        "  Ctrl+Alt+1-5            Jump to desktop 1-5",
         "",
         targetTitle,
         "  m                       Enter Targeting (from Normal)",
@@ -1087,7 +1088,10 @@ BuildMinDock(windows) {
     loop count {
         x := (A_Index - 1) * (DockIconSize + DockIconSpacing)
         MinDockGui.Add("Picture", "x" x " y0 w" DockIconSize " h" DockIconSize " +Disabled", GetGrayscaleIconPath(windows[A_Index]))
-        MinDockGui.Add("Text", "x" x " y" (DockIconSize + 4) " w" DockIconSize " h" DockNumberHeight " Center", A_Index)
+        ; Only the first nine minimized windows have restore numbers. Later
+        ; icons stay visible but have no number below them.
+        if (A_Index <= 9)
+            MinDockGui.Add("Text", "x" x " y" (DockIconSize + 4) " w" DockIconSize " h" DockNumberHeight " Center", A_Index)
     }
 
     MinDockWidth := DockMarginX * 2 + count * DockIconSize + (count - 1) * DockIconSpacing
@@ -2317,6 +2321,46 @@ GoToWindowByIndex(index) {
     }
 }
 
+; Minimize the focused open window. The minimized dock and main dock update
+; through RefreshDockState, so this also works when Windows leaves focus on the
+; minimized window.
+MinimizeActiveWindow() {
+    hwnd := WinActive("A")
+    if (!hwnd || GetOpenIndex(hwnd) == 0) {
+        FlashMessage("NO OPEN WINDOW")
+        return
+    }
+
+    try {
+        WinMinimize("ahk_id " hwnd)
+        FlashMessage("WINDOW MINIMIZED")
+        SetTimer(() => RefreshDockState(), -DockUpdateDelay)
+    } catch as err {
+        FlashMessage("FAILED TO MINIMIZE")
+    }
+}
+
+; Restore a minimized window by its grey-dock number. Only the first nine
+; minimized windows have numbers and can be restored this way.
+; @param index - Minimized-window number (1-9)
+RestoreMinimizedWindow(index) {
+    minimizedWindows := GetMinimizedWindows()
+    if (index < 1 || index > minimizedWindows.Length) {
+        FlashMessage("MINIMIZED " . index . " NOT FOUND")
+        return
+    }
+
+    target := minimizedWindows[index]
+    try {
+        WinRestore("ahk_id " target)
+        WinActivate("ahk_id " target)
+        FlashMessage("MINIMIZED " . index . " RESTORED")
+        SetTimer(() => RefreshDockState(), -DockUpdateDelay)
+    } catch as err {
+        FlashMessage("FAILED TO RESTORE")
+    }
+}
+
 ; Add all existing windows to the stack on startup or desktop switch
 InitializeExistingWindows() {
     global WindowWidths, FullWidthRatio
@@ -2699,11 +2743,11 @@ CapsLock:: {
         SetTimer(() => InitializeDesktop(CurrentDesktop), -DesktopSwitchDelay)
     }
 }
-^1:: GoToDesktop(1)
-^2:: GoToDesktop(2)
-^3:: GoToDesktop(3)
-^4:: GoToDesktop(4)
-^5:: GoToDesktop(5)
+^!1:: GoToDesktop(1)
+^!2:: GoToDesktop(2)
+^!3:: GoToDesktop(3)
+^!4:: GoToDesktop(4)
+^!5:: GoToDesktop(5)
 #HotIf
 
 #HotIf VimMode > 0 && !HelpVisible
@@ -2934,6 +2978,18 @@ SC027:: return ; ';' is swallowed; use ':' for command mode
 7:: GoToWindowByIndex(7)
 8:: GoToWindowByIndex(8)
 9:: GoToWindowByIndex(9)
+
+; Minimize the focused open window / restore a numbered minimized window
+^m:: MinimizeActiveWindow()
+^1:: RestoreMinimizedWindow(1)
+^2:: RestoreMinimizedWindow(2)
+^3:: RestoreMinimizedWindow(3)
+^4:: RestoreMinimizedWindow(4)
+^5:: RestoreMinimizedWindow(5)
+^6:: RestoreMinimizedWindow(6)
+^7:: RestoreMinimizedWindow(7)
+^8:: RestoreMinimizedWindow(8)
+^9:: RestoreMinimizedWindow(9)
 #HotIf
 
 ; --- Visual Vim Mode Commands ---
@@ -3186,6 +3242,16 @@ RunKeyAction(context, action, *) {
         case "Normal.Window7": GoToWindowByIndex(7)
         case "Normal.Window8": GoToWindowByIndex(8)
         case "Normal.Window9": GoToWindowByIndex(9)
+        case "Normal.Minimize": MinimizeActiveWindow()
+        case "Normal.Minimized1": RestoreMinimizedWindow(1)
+        case "Normal.Minimized2": RestoreMinimizedWindow(2)
+        case "Normal.Minimized3": RestoreMinimizedWindow(3)
+        case "Normal.Minimized4": RestoreMinimizedWindow(4)
+        case "Normal.Minimized5": RestoreMinimizedWindow(5)
+        case "Normal.Minimized6": RestoreMinimizedWindow(6)
+        case "Normal.Minimized7": RestoreMinimizedWindow(7)
+        case "Normal.Minimized8": RestoreMinimizedWindow(8)
+        case "Normal.Minimized9": RestoreMinimizedWindow(9)
 
         case "Visual.Delete":
         {

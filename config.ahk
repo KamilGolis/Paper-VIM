@@ -41,8 +41,8 @@ global DockNumberFontSize := "s8"
 global DockIconSize := 32
 global DockIconSpacing := 8
 global DockMinimizedPadding := 24
-global DockLeftCount := 2
-global DockRightCount := 2
+global DockLeftCount := 4
+global DockRightCount := 4
 global DockMarginX := 12
 global DockMarginY := 8
 global DockPosY := 10
@@ -75,11 +75,11 @@ global DefaultKeymap := Map(
     "Desktop", Map(
         "PrevDesktop", "^j",
         "NextDesktop", "^k",
-        "Desktop1", "^1",
-        "Desktop2", "^2",
-        "Desktop3", "^3",
-        "Desktop4", "^4",
-        "Desktop5", "^5"
+        "Desktop1", "^!1",
+        "Desktop2", "^!2",
+        "Desktop3", "^!3",
+        "Desktop4", "^!4",
+        "Desktop5", "^!5"
     ),
     "Manage", Map(
         "Overlay", "^f",
@@ -131,6 +131,7 @@ global DefaultKeymap := Map(
         "AppendEnd", "+a",
         "Semicolon", "SC027",
         "Command", "+SC027",
+        "Minimize", "^m",
         "Window1", "1",
         "Window2", "2",
         "Window3", "3",
@@ -139,7 +140,16 @@ global DefaultKeymap := Map(
         "Window6", "6",
         "Window7", "7",
         "Window8", "8",
-        "Window9", "9"
+        "Window9", "9",
+        "Minimized1", "^1",
+        "Minimized2", "^2",
+        "Minimized3", "^3",
+        "Minimized4", "^4",
+        "Minimized5", "^5",
+        "Minimized6", "^6",
+        "Minimized7", "^7",
+        "Minimized8", "^8",
+        "Minimized9", "^9"
     ),
     "Visual", Map(
         "Delete", "d",
