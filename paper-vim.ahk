@@ -1,6 +1,6 @@
 ; ==============================================================================
 ; Paper-VIM: Vim Keybindings + PaperWM Window Manager
-; Version: 1.12.0
+; Version: 1.13.0
 ; Author: KamilGolis
 ; Description: Combines vim-style navigation with PaperWM tiling window manager
 ; License: MIT
@@ -19,7 +19,9 @@ CoordMode "ToolTip", "Screen"
 ; Defaults and the optional paper-vim.ini overrides live in config.ahk.
 #Include config.ahk
 
-global DockSlotCount := DockLeftCount + 1 + DockRightCount
+global DockWindowLimit := 10
+global DockSlotCount := DockWindowLimit
+global DockScale := A_ScreenDPI / 96
 global TargetGridCellCount := TargetGridRows * TargetGridCols
 
 ; ==============================================================================
@@ -99,14 +101,16 @@ global DockSlotPics := []             ; Persistent Picture controls
 global DockNumberCtrls := []          ; Persistent number label controls
 global DockSlotHwnds := []            ; Window handle currently shown in each slot
 global DockActiveUnderline := 0       ; Persistent active-slot underline
-global DockWidth := 0                 ; Cached auto-sized dock width
+global DockPlusCtrl := 0               ; Plus marker when more than ten windows exist
+global DockWidth := 0                 ; Current dock width
 global DockHeight := 0                ; Cached auto-sized dock height
-global DockShown := false            ; Dock window is currently visible
+global DockShown := false             ; Dock window is currently visible
 global DockShownX := 0                ; Last shown position
 global DockShownY := 0
+global DockShownW := 0                ; Last shown width
 
 ; --- Minimized Dock State ---
-; The minimized dock is next to the main dock and lists managed windows with
+; The minimized dock is left of center and lists managed windows with
 ; WinGetMinMax() = -1. Its numbers are separate from the main open-window
 ; numbers. Controls are rebuilt only when the minimized window list changes.
 global MinDockGui := 0                ; Grey dock for minimized windows
@@ -184,13 +188,15 @@ loop DockSlotCount {
     DockNumberCtrls.Push(DockNumberCtrl)
 }
 DockActiveUnderline := DockGui.Add("Text", "x0 y" (DockIconSize + 2) " w" DockIconSize " h2 Background" ActiveIndicatorColor, "")
+DockActiveUnderline.Visible := false
+DockPlusCtrl := DockGui.Add("Text", "x0 y0 w" DockIconSize " h" DockIconSize " Center", "+")
+DockPlusCtrl.SetFont("s16 " DockInactiveNumberColor, FontFamily)
+DockPlusCtrl.Visible := false
 
-; Measure the fixed dock once while hidden. Its width does not change because
-; the number of slots is fixed.
+; Measure the dock height once while hidden. The width changes with the number
+; of displayed open windows, so it is calculated on each dock update.
 DockGui.Show("Hide")
 WinGetPos(&dockMeasuredX, &dockMeasuredY, &DockWidth, &DockHeight, DockGui.Hwnd)
-if (DockWidth <= 1)
-    DockWidth := DockMarginX * 2 + DockSlotCount * DockIconSize + (DockSlotCount - 1) * DockIconSpacing
 if (DockHeight <= 1)
     DockHeight := DockMarginY * 2 + DockIconSize + 4 + DockNumberHeight
 DockGui.Hide()
@@ -456,7 +462,7 @@ BuildHelpText(currentMode) {
         "  n / Tab                 Next / previous open window",
         "  1-9                     Jump to open window number",
         "  Ctrl+M                  Minimize focused window",
-        "  Ctrl+1-9                Restore minimized window 1-9",
+        "  Ctrl+1-9 / Ctrl+0       Restore minimized window 1-9 / 10",
         "  Ctrl+H / Ctrl+L         Swap with left / right window",
         "  Ctrl+Shift+1/2/3        Width 25% / 50% / 75%",
         "  Ctrl+Shift+0            Full width (focus/peek)",
@@ -951,13 +957,13 @@ ToggleSuspend() {
 UpdateDock() {
     global WindowStack, DockGui, MinDockGui
     global DockSlotPics, DockNumberCtrls, DockActiveUnderline, DockSlotHwnds, DockSlotCount
-    global DockWidth, DockHeight, DockShown, DockShownX, DockShownY
-    global DockIconSize, DockIconSpacing, DockLeftCount, DockRightCount, DockNumberHeight
-    global DockMarginX, DockMarginY, WorkLeft, WorkTop, WorkWidth, DockPosY
+    global DockPlusCtrl, DockWidth, DockHeight, DockShown, DockShownX, DockShownY, DockShownW, DockScale
+    global DockIconSize, DockIconSpacing, DockNumberHeight
+    global DockMarginX, DockMarginY, WorkLeft, WorkTop, WorkWidth, DockPosY, DockMinimizedPadding
     global DockRefreshOpen, DockRefreshMin
     global ActiveIndicatorColor, DockInactiveNumberColor, DockNumberFontSize, FontFamily
 
-    ; Keep the dock centered inside the usable area when the taskbar moves
+    ; Keep the dock inside the usable area when the taskbar moves.
     RefreshWorkArea()
 
     openWindows := GetOpenWindows()
@@ -965,8 +971,8 @@ UpdateDock() {
     DockRefreshOpen := openWindows
     DockRefreshMin := minimizedWindows
 
-    ; No open windows: hide the fixed five-slot dock. The minimized dock can
-    ; still be visible when every managed window is minimized.
+    ; No open windows: hide the main dock. The minimized dock can still be
+    ; visible when every managed window is minimized.
     if (openWindows.Length == 0) {
         try DockGui.Hide()
         DockShown := false
@@ -974,71 +980,90 @@ UpdateDock() {
         loop DockSlotCount
             DockSlotHwnds.Push(0)
         try DockActiveUnderline.Visible := false
-        UpdateMinimizedDock(minimizedWindows, false)
+        try DockPlusCtrl.Visible := false
+        UpdateMinimizedDock(minimizedWindows)
         RaiseOverlays()
         return
     }
 
-    ; The main dock numbers open windows 1..N. A minimized active window has
-    ; no underline; use the first open window as the display center so the
-    ; fixed dock still has a stable position.
-    activeIndex := GetOpenIndex(WinActive("A"))
-    displayIndex := activeIndex ? activeIndex : 1
-
-    ; Helper function to wrap index for circular navigation
-    WrapIndex(idx, count) {
-        while (idx < 1)
-            idx += count
-        while (idx > count)
-            idx -= count
-        return idx
-    }
-
-    ; Build the five visible slot indices: left, active, right.
-    indices := []
-    loop DockLeftCount
-        indices.Push(WrapIndex(displayIndex - DockLeftCount + A_Index - 1, openWindows.Length))
-    indices.Push(displayIndex)
-    loop DockRightCount
-        indices.Push(WrapIndex(displayIndex + A_Index, openWindows.Length))
+    ; The dock is ordered from the start of the center split. It does not
+    ; scroll: when the focused window is outside the first ten, it is promoted
+    ; to the first slot and the remaining visible windows follow.
+    dockWindows := GetDockWindows(openWindows)
+    moreWindows := openWindows.Length > dockWindows.Length
+    activeHwnd := WinActive("A")
+    activeIndex := GetDockIndex(dockWindows, activeHwnd)
 
     DockActiveUnderline.Visible := false
     xPos := 0
-    for slot, idx in indices {
-        hwnd := openWindows[idx]
+    loop DockSlotCount {
+        slot := A_Index
+        if (slot <= dockWindows.Length) {
+            hwnd := dockWindows[slot]
 
-        ; Only replace the icon when this slot changes windows. This avoids
-        ; extracting and reloading every icon on every reflow.
-        if (DockSlotHwnds[slot] != hwnd) {
-            DockSlotPics[slot].Value := GetWindowIconPath(hwnd)
-            DockSlotHwnds[slot] := hwnd
-        }
-        DockSlotPics[slot].Move(xPos, 0, DockIconSize, DockIconSize)
+            ; Only replace the icon when this slot changes windows. This avoids
+            ; extracting and reloading every icon on every reflow.
+            if (DockSlotHwnds[slot] != hwnd) {
+                DockSlotPics[slot].Value := GetWindowIconPath(hwnd)
+                DockSlotHwnds[slot] := hwnd
+            }
+            DockSlotPics[slot].Visible := true
+            DockSlotPics[slot].Move(xPos, 0, DockIconSize, DockIconSize)
 
-        number := DockNumberCtrls[slot]
-        number.Move(xPos, DockIconSize + 4, DockIconSize, DockNumberHeight)
-        number.Value := idx
-        if (activeIndex && idx == activeIndex) {
-            number.SetFont(DockNumberFontSize " c" ActiveIndicatorColor, FontFamily)
-            DockActiveUnderline.Move(xPos, DockIconSize + 2, DockIconSize, 2)
-            DockActiveUnderline.Visible := true
+            number := DockNumberCtrls[slot]
+            number.Visible := true
+            number.Move(xPos, DockIconSize + 4, DockIconSize, DockNumberHeight)
+            number.Value := slot == 10 ? 0 : slot
+            if (activeIndex == slot) {
+                number.SetFont(DockNumberFontSize " c" ActiveIndicatorColor, FontFamily)
+                DockActiveUnderline.Move(xPos, DockIconSize + 2, DockIconSize, 2)
+                DockActiveUnderline.Visible := true
+            } else {
+                number.SetFont(DockNumberFontSize " " DockInactiveNumberColor, FontFamily)
+            }
+
+            xPos += DockIconSize + DockIconSpacing
         } else {
-            number.SetFont(DockNumberFontSize " " DockInactiveNumberColor, FontFamily)
+            DockSlotPics[slot].Visible := false
+            DockNumberCtrls[slot].Visible := false
         }
-
-        xPos += DockIconSize + DockIconSpacing
     }
 
-    dockX := WorkLeft + (WorkWidth - DockWidth) / 2
+    if (moreWindows) {
+        DockPlusCtrl.Visible := true
+        DockPlusCtrl.Move(xPos, 0, DockIconSize, DockIconSize)
+        xPos += DockIconSize + DockIconSpacing
+    } else {
+        DockPlusCtrl.Visible := false
+    }
+
+    slotCount := dockWindows.Length + (moreWindows ? 1 : 0)
+    DockWidth := DockMarginX * 2 + slotCount * DockIconSize + (slotCount - 1) * DockIconSpacing
+    dockWidthActual := Round(DockWidth * DockScale)
+
+    ; The open dock starts at the center and grows to the right. The padding is
+    ; split around the center, so the minimized dock gets the left half and
+    ; this dock gets the right half. GUI widths are DPI-scaled, while WinGetPos
+    ; and the work area are physical pixels; use the actual width for placement.
+    centerX := WorkLeft + WorkWidth / 2
+    gap := Round(Max(0, DockMinimizedPadding) * DockScale)
+    dockX := Round(centerX + gap / 2)
+    maxDockX := WorkLeft + WorkWidth - dockWidthActual
+    if (dockX > maxDockX)
+        dockX := maxDockX
+    if (dockX < WorkLeft)
+        dockX := WorkLeft
     dockY := WorkTop + DockPosY
-    if (!DockShown || dockX != DockShownX || dockY != DockShownY) {
-        DockGui.Show("NA x" dockX " y" dockY " NoActivate")
+    if (!DockShown || dockX != DockShownX || dockY != DockShownY || dockWidthActual != DockShownW) {
+        DockGui.Show("NA AutoSize NoActivate")
+        DllCall("SetWindowPos", "Ptr", DockGui.Hwnd, "Ptr", 0, "Int", dockX, "Int", dockY, "Int", 0, "Int", 0, "UInt", 0x1 | 0x4 | 0x10)
         DockShown := true
         DockShownX := dockX
         DockShownY := dockY
+        DockShownW := dockWidthActual
     }
 
-    UpdateMinimizedDock(minimizedWindows, true)
+    UpdateMinimizedDock(minimizedWindows)
 
     ; Keep the dock above the focus-border bars. Showing the dock does not
     ; necessarily put it above an existing topmost border bar.
@@ -1086,12 +1111,16 @@ BuildMinDock(windows) {
 
     count := windows.Length
     loop count {
-        x := (A_Index - 1) * (DockIconSize + DockIconSpacing)
+        ; The dock is anchored at the center on its right edge. Number 1 is
+        ; nearest the center and later numbers extend to the left.
+        x := (count - A_Index) * (DockIconSize + DockIconSpacing)
         MinDockGui.Add("Picture", "x" x " y0 w" DockIconSize " h" DockIconSize " +Disabled", GetGrayscaleIconPath(windows[A_Index]))
-        ; Only the first nine minimized windows have restore numbers. Later
-        ; icons stay visible but have no number below them.
+        ; The first ten minimized windows have restore numbers. Later icons
+        ; stay visible but have no number below them.
         if (A_Index <= 9)
             MinDockGui.Add("Text", "x" x " y" (DockIconSize + 4) " w" DockIconSize " h" DockNumberHeight " Center", A_Index)
+        else if (A_Index == 10)
+            MinDockGui.Add("Text", "x" x " y" (DockIconSize + 4) " w" DockIconSize " h" DockNumberHeight " Center", "0")
     }
 
     MinDockWidth := DockMarginX * 2 + count * DockIconSize + (count - 1) * DockIconSpacing
@@ -1105,11 +1134,10 @@ BuildMinDock(windows) {
 ; of the main dock, or to the left when the right edge would overflow. When
 ; there is no main dock, it is centered.
 ; @param windows - Array of minimized window handles
-; @param mainVisible - Whether the main five-slot dock is visible
-UpdateMinimizedDock(windows, mainVisible) {
+UpdateMinimizedDock(windows) {
     global MinDockGui, MinDockHwnds, MinDockWidth, MinDockHeight, MinDockShown
     global MinDockShownX, MinDockShownY
-    global WorkLeft, WorkTop, WorkWidth, DockWidth, DockPosY, DockMinimizedPadding
+    global WorkLeft, WorkTop, WorkWidth, DockPosY, DockMinimizedPadding, DockScale
 
     if (!windows || windows.Length == 0) {
         if (IsSet(MinDockGui) && MinDockGui)
@@ -1122,24 +1150,23 @@ UpdateMinimizedDock(windows, mainVisible) {
     if (!IsSet(MinDockGui) || !MinDockGui || !SameHwndList(MinDockHwnds, windows))
         BuildMinDock(windows)
 
-    gap := Max(0, DockMinimizedPadding)
-    if (mainVisible) {
-        mainX := WorkLeft + (WorkWidth - DockWidth) / 2
-        minX := mainX + DockWidth + gap
-        if (minX + MinDockWidth > WorkLeft + WorkWidth)
-            minX := mainX - gap - MinDockWidth
-    } else {
-        minX := WorkLeft + (WorkWidth - MinDockWidth) / 2
-    }
+    ; The minimized dock ends at the left half of the center gap and extends
+    ; left. The open dock starts at the right half. GUI widths are DPI-scaled;
+    ; use the actual width for physical placement.
+    centerX := WorkLeft + WorkWidth / 2
+    gap := Round(Max(0, DockMinimizedPadding) * DockScale)
+    minWidthActual := Round(MinDockWidth * DockScale)
+    minX := Round(centerX - gap / 2 - minWidthActual)
 
     if (minX < WorkLeft)
         minX := WorkLeft
-    if (minX + MinDockWidth > WorkLeft + WorkWidth)
-        minX := WorkLeft + WorkWidth - MinDockWidth
+    if (minX + minWidthActual > WorkLeft + WorkWidth)
+        minX := WorkLeft + WorkWidth - minWidthActual
     minY := WorkTop + DockPosY
 
     if (!MinDockShown || minX != MinDockShownX || minY != MinDockShownY) {
-        MinDockGui.Show("NA x" minX " y" minY " w" MinDockWidth " h" MinDockHeight " NoActivate")
+        MinDockGui.Show("NA AutoSize NoActivate")
+        DllCall("SetWindowPos", "Ptr", MinDockGui.Hwnd, "Ptr", 0, "Int", minX, "Int", minY, "Int", 0, "Int", 0, "UInt", 0x1 | 0x4 | 0x10)
         MinDockShown := true
         MinDockShownX := minX
         MinDockShownY := minY
@@ -2126,6 +2153,56 @@ GetOpenIndex(hwnd) {
     return 0
 }
 
+; Get the windows shown by the main dock. The dock is fixed to the first
+; DockWindowLimit open windows in stack order. If the focused window is outside
+; that set, it is promoted to the first position and the rest are shown in stack
+; order; the dock itself does not scroll.
+; @param openWindows - Array from GetOpenWindows
+; @return Array of up to DockWindowLimit handles
+GetDockWindows(openWindows) {
+    limit := DockWindowLimit
+    active := WinActive("A")
+    activeIndex := 0
+    for i, hwnd in openWindows {
+        if (hwnd == active) {
+            activeIndex := i
+            break
+        }
+    }
+
+    dockWindows := []
+    if (activeIndex > limit) {
+        dockWindows.Push(active)
+        for hwnd in openWindows {
+            if (hwnd == active)
+                continue
+            if (dockWindows.Length >= limit)
+                break
+            dockWindows.Push(hwnd)
+        }
+    } else {
+        for i, hwnd in openWindows {
+            if (i > limit)
+                break
+            dockWindows.Push(hwnd)
+        }
+    }
+    return dockWindows
+}
+
+; Get the 1-based position of a window in the main dock list.
+; @param windows - Array from GetDockWindows
+; @param hwnd - Window handle
+; @return Position, or 0 when not shown
+GetDockIndex(windows, hwnd) {
+    if (!hwnd)
+        return 0
+    for i, item in windows
+        if (item == hwnd)
+            return i
+    return 0
+}
+
 ; Compare two arrays of window handles in order.
 ; @param left - First array
 ; @param right - Second array
@@ -2297,8 +2374,12 @@ GoToWindowByIndex(index) {
     ; Don't switch windows when layout is frozen
     if (LayoutFrozen())
         return
-    
-    openWindows := GetOpenWindows()
+
+    ; 0 is the dock label for the tenth open window.
+    if (index == 0)
+        index := 10
+
+    openWindows := GetDockWindows(GetOpenWindows())
     if (openWindows.Length == 0 || index < 1 || index > openWindows.Length) {
         FlashMessage("WINDOW " . index . " NOT FOUND")
         return
@@ -2344,9 +2425,16 @@ MinimizeActiveWindow() {
 ; minimized windows have numbers and can be restored this way.
 ; @param index - Minimized-window number (1-9)
 RestoreMinimizedWindow(index) {
+    ; 0 is the dock label for the tenth minimized window.
+    label := index
+    if (index == 0) {
+        index := 10
+        label := 0
+    }
+
     minimizedWindows := GetMinimizedWindows()
     if (index < 1 || index > minimizedWindows.Length) {
-        FlashMessage("MINIMIZED " . index . " NOT FOUND")
+        FlashMessage("MINIMIZED " . label . " NOT FOUND")
         return
     }
 
@@ -2354,7 +2442,7 @@ RestoreMinimizedWindow(index) {
     try {
         WinRestore("ahk_id " target)
         WinActivate("ahk_id " target)
-        FlashMessage("MINIMIZED " . index . " RESTORED")
+        FlashMessage("MINIMIZED " . label . " RESTORED")
         SetTimer(() => RefreshDockState(), -DockUpdateDelay)
     } catch as err {
         FlashMessage("FAILED TO RESTORE")
@@ -2990,6 +3078,7 @@ SC027:: return ; ';' is swallowed; use ':' for command mode
 ^7:: RestoreMinimizedWindow(7)
 ^8:: RestoreMinimizedWindow(8)
 ^9:: RestoreMinimizedWindow(9)
+^0:: RestoreMinimizedWindow(0)
 #HotIf
 
 ; --- Visual Vim Mode Commands ---
@@ -3252,6 +3341,7 @@ RunKeyAction(context, action, *) {
         case "Normal.Minimized7": RestoreMinimizedWindow(7)
         case "Normal.Minimized8": RestoreMinimizedWindow(8)
         case "Normal.Minimized9": RestoreMinimizedWindow(9)
+        case "Normal.Minimized0": RestoreMinimizedWindow(0)
 
         case "Visual.Delete":
         {

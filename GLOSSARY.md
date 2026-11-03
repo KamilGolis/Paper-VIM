@@ -59,17 +59,24 @@ match process names or window classes.
 
 **Open window**:
 A managed window that is not minimized and not floating. Open windows form the
-tiling row and the main dock, and `n`, `Tab`, and `1-9` use their order.
+tiling row and the open dock, and `n`, `Tab`, and `1-9` use their order. The
+open dock shows at most ten windows and labels the tenth as `0`.
 
 **Minimized window**:
 A managed window with `WinGetMinMax()` equal to -1. It keeps its stack position
 and remembered width, but leaves the tiling row and main dock. It is skipped by
 `n`/`Tab` and shown in the grey minimized dock.
 
+**Split dock**:
+The two docks around the horizontal center: the open dock grows right from the
+center gap and the minimized dock grows left. `DockMinimizedPadding` is the
+total center gap, split between the two.
+
 **Minimized dock**:
-The grey dock next to the main dock. It lists every minimized managed window in
-stack order. The first nine get numbers and can be restored with `Ctrl+1..9`;
-later icons remain unnumbered.
+The grey dock left of center. It lists every minimized managed window in stack
+order, with number `1` nearest the center. The first ten get numbers `1..9` and
+`0` and can be restored with `Ctrl+1..9` / `Ctrl+0`; later icons remain
+unnumbered.
 
 **Focus border**:
 The visual outline that marks the active managed window.

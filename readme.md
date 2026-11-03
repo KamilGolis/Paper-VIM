@@ -107,7 +107,8 @@ The 25/50/75 presets use niri-style edge scrolling.
 - **Tab**: Cycle to the previous open window (left)
 - **1-9**: Jump directly to open window 1-9
 - **Ctrl+M**: Minimize the focused open window
-- **Ctrl+1..9**: Restore minimized window 1-9 to the main dock
+- **Ctrl+1..9**: Restore minimized window 1-9 to the open dock
+- **Ctrl+0**: Restore minimized window 10 to the open dock
 - **Ctrl+H**: Swap current window with the one on its left
 - **Ctrl+L**: Swap current window with the one on its right
 - **z**: Manually reflow/refresh window positions
@@ -158,39 +159,43 @@ easy to tell apart.
 - Like the rest of the layout, it currently follows the main-monitor limitation.
 
 ### Visual Dock
-A transparent main dock at the top-center of your screen shows open windows:
-- **Nine icon slots** in open-window order; slots wrap when fewer than nine open windows are managed
-- **Window numbers** below each icon (position among open windows)
-- **Center icon** (underlined in green): Current active window with bright green number
-- **Left 2 icons**: Previous open windows (press `Tab` to go left) with gray numbers
-- **Right 2 icons**: Next open windows (press `n` to go right) with gray numbers
-- **Infinite scrolling**: Icons wrap around at open-window edges
-- **Direct access**: Press the number shown to jump to that open window
+The docks are split around the horizontal center of the work area:
 
-Minimized windows move to a **grey dock immediately to the right** of the main
-dock:
-- Every minimized managed window gets an icon, with no fixed limit
-- Icons and numbers are greyed out
-- Numbers are separate from the main dock: minimized windows are numbered
-  1..M in stack order
-- The first nine minimized windows are numbered and can be restored with
-  `Ctrl+1` through `Ctrl+9`; later icons have no numbers
-- **Spacing**: `DockMinimizedPadding` sets the gap from the main dock in pixels
-  (default 24)
-- The grey dock moves left of the main dock when it would overflow the work
-  area
-- If every managed window is minimized, the main dock is hidden and the grey
-  dock is centered
+- **Open dock**: starts just right of center and grows right.
+- **Minimized dock (`mdock`)**: ends just left of center and grows left.
+- `DockMinimizedPadding` is the total gap at the center in pixels (default 24).
+  Each dock gets half of it.
 
-Example with nine open windows, active window 3:
+**Open dock**
+
+- Shows up to ten open windows in stack order.
+- Numbers are `1` through `9`, then `0` for the tenth window.
+- The active window is marked by a green underline and green number. The
+  marker moves to the active window; the dock does not scroll.
+- If the active window is outside the first ten, it is promoted to the first
+  position and the remaining visible windows are rearranged.
+- When more than ten windows are open, a `+` appears at the end. It is not
+  numbered or selectable.
+
+**Minimized dock**
+
+- Every minimized managed window gets an icon; there is no fixed limit.
+- Icons and numbers are greyed out.
+- Number `1` is nearest the center; later numbers extend left.
+- The first ten are numbered `1..9` and `0`.
+- `Ctrl+1..9` restores numbers 1–9, and `Ctrl+0` restores number 0. Later icons
+  have no numbers.
+- If every managed window is minimized, the open dock is hidden; the minimized
+  dock keeps its center-left position.
+
+Example with ten open windows, active window 10:
 
 ```
-Main dock:       [1] [2] [3̲] [4] [5] [6] [7] [8] [9]
-Open numbers:     1   2   3   4   5   6   7   8   9
+Open dock:       [1] [2] [3] [4] [5] [6] [7] [8] [9] [0̲]
+Open numbers:     1   2   3   4   5   6   7   8   9   0
 ```
 
-Minimized windows are not part of this main dock; they get separate `1..M`
-numbers in the grey dock.
+Minimized windows get separate numbers in the grey dock.
 
 ---
 
@@ -419,14 +424,14 @@ FOUND", and a hidden target shows "WINDOW X NOT AVAILABLE".
 
 ### Window Dock (Top-Center)
 - **Always visible** when windows are managed (hidden when suspended)
-- **Main dock**: Nine fixed slots for open windows
-- **Minimized dock**: Grey dock next to the main dock, with one icon per minimized window and no fixed limit
+- **Open dock**: Up to ten open windows, numbered `1..9` and `0`, with a `+` when more exist
+- **Minimized dock**: Grey dock left of center, with one icon per minimized window and no fixed limit
 - **Transparent background**
-- **Green underline**: Current active open window
-- **Window numbers**: Below each icon
-- **Active window number**: Bright green in the main dock
+- **Green underline**: Current active open window; the marker moves to the active icon
+- **Window numbers**: Below each icon; first ten minimized icons use `1..9` and `0`
+- **Active window number**: Bright green in the open dock
 - **Inactive and minimized numbers**: Gray
-- **Centered main dock**: The main dock measures its real auto-sized width
+- **Split anchor**: Each dock starts from its half of the center gap
 - **Updates automatically** when navigating, minimizing, restoring, or closing windows
 
 ---
@@ -526,8 +531,7 @@ The example file lists every setting and default:
 - `[Colors]` — HUD, dock, mode, flash, and suspended colors
 - `[FocusBorder]` — enabled flag, color, thickness, update interval
 - `[Fonts]` — UI font family and sizes
-- `[Dock]` — icon size, spacing, side counts, margins, position, minimized-dock
-  padding
+- `[Dock]` — icon size, spacing, margins, position, center gap between docks
 - `[HUD]` — margins, position, width, flash duration
 - `[Timing]` — double-key timeout, reflow debounce, desktop, dock, and tooltip delays
 - `[Targeting]` — minimum cell size, rows, columns, and key list
@@ -607,17 +611,16 @@ If the dock shows blank spaces or default icons instead of app icons:
 - **Solution**: Run the script as administrator (right-click → "Run as administrator")
 - **Alternative**: Accept that some system windows will show default icons in the dock
 
-### Dock repeats icons with fewer than nine windows
-- The main dock always fills nine slots and wraps around the open-window list,
-  so an icon can repeat when fewer than nine open windows are managed. This is
-  expected.
-- Minimized windows are not part of that repetition; they appear once each in
-  the grey dock.
+### The open dock does not show all windows
+- The open dock shows at most ten windows. A `+` at the end means more are open.
+- If Alt-Tab focuses a window outside the first ten, that window moves to the
+  first dock position and the other visible windows are rearranged.
+- The tiling row still contains all open windows; use `n`/`Tab` to reach them.
 
-### Minimized windows are not in the main dock
+### Minimized windows are not in the open dock
 - This is intentional. Minimized windows keep their stack position and width,
-  but move to the grey dock and are skipped by `n`/`Tab` and `1-9`.
-- Restore a window from the taskbar to return it to the open row and main dock.
+  but move to the grey dock and are skipped by `n`/`Tab` and the open numbers.
+- Restore one with `Ctrl+1..9` or `Ctrl+0`, or from the taskbar.
 
 ### Vim mode stuck on
 - Press **CapsLock** to toggle off
