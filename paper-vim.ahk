@@ -1,6 +1,6 @@
 ; ==============================================================================
 ; Paper-VIM: Vim Keybindings + PaperWM Window Manager
-; Version: 1.11.0
+; Version: 1.11.1
 ; Author: KamilGolis
 ; Description: Combines vim-style navigation with PaperWM tiling window manager
 ; License: MIT
@@ -1105,7 +1105,7 @@ BuildMinDock(windows) {
 UpdateMinimizedDock(windows, mainVisible) {
     global MinDockGui, MinDockHwnds, MinDockWidth, MinDockHeight, MinDockShown
     global MinDockShownX, MinDockShownY
-    global WorkLeft, WorkTop, WorkWidth, DockWidth, DockPosY, DockIconSpacing
+    global WorkLeft, WorkTop, WorkWidth, DockWidth, DockPosY, DockMinimizedPadding
 
     if (!windows || windows.Length == 0) {
         if (IsSet(MinDockGui) && MinDockGui)
@@ -1118,11 +1118,12 @@ UpdateMinimizedDock(windows, mainVisible) {
     if (!IsSet(MinDockGui) || !MinDockGui || !SameHwndList(MinDockHwnds, windows))
         BuildMinDock(windows)
 
+    gap := Max(0, DockMinimizedPadding)
     if (mainVisible) {
         mainX := WorkLeft + (WorkWidth - DockWidth) / 2
-        minX := mainX + DockWidth + DockIconSpacing
+        minX := mainX + DockWidth + gap
         if (minX + MinDockWidth > WorkLeft + WorkWidth)
-            minX := mainX - DockIconSpacing - MinDockWidth
+            minX := mainX - gap - MinDockWidth
     } else {
         minX := WorkLeft + (WorkWidth - MinDockWidth) / 2
     }

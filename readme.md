@@ -172,6 +172,8 @@ dock:
 - Numbers are separate from the main dock: minimized windows are numbered
   1..M in stack order
 - Minimized numbers are display-only for now; `1-9` still address open windows
+- **Spacing**: `DockMinimizedPadding` sets the gap from the main dock in pixels
+  (default 24)
 - The grey dock moves left of the main dock when it would overflow the work
   area
 - If every managed window is minimized, the main dock is hidden and the grey
@@ -522,7 +524,8 @@ The example file lists every setting and default:
 - `[Colors]` — HUD, dock, mode, flash, and suspended colors
 - `[FocusBorder]` — enabled flag, color, thickness, update interval
 - `[Fonts]` — UI font family and sizes
-- `[Dock]` — icon size, spacing, side counts, margins, position
+- `[Dock]` — icon size, spacing, side counts, margins, position, minimized-dock
+  padding
 - `[HUD]` — margins, position, width, flash duration
 - `[Timing]` — double-key timeout, reflow debounce, desktop, dock, and tooltip delays
 - `[Targeting]` — minimum cell size, rows, columns, and key list
