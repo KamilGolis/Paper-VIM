@@ -40,8 +40,7 @@ global HUDFontWeight := "w800"
 global DockNumberFontSize := "s8"
 global DockIconSize := 32
 global DockIconSpacing := 8
-global DockLeftCount := 2
-global DockRightCount := 2
+global DockMinimizedPadding := 24    ; Total center gap; split between both docks
 global DockMarginX := 12
 global DockMarginY := 8
 global DockPosY := 10
@@ -74,11 +73,11 @@ global DefaultKeymap := Map(
     "Desktop", Map(
         "PrevDesktop", "^j",
         "NextDesktop", "^k",
-        "Desktop1", "^1",
-        "Desktop2", "^2",
-        "Desktop3", "^3",
-        "Desktop4", "^4",
-        "Desktop5", "^5"
+        "Desktop1", "^!1",
+        "Desktop2", "^!2",
+        "Desktop3", "^!3",
+        "Desktop4", "^!4",
+        "Desktop5", "^!5"
     ),
     "Manage", Map(
         "Overlay", "^f",
@@ -130,6 +129,7 @@ global DefaultKeymap := Map(
         "AppendEnd", "+a",
         "Semicolon", "SC027",
         "Command", "+SC027",
+        "Minimize", "^m",
         "Window1", "1",
         "Window2", "2",
         "Window3", "3",
@@ -138,7 +138,17 @@ global DefaultKeymap := Map(
         "Window6", "6",
         "Window7", "7",
         "Window8", "8",
-        "Window9", "9"
+        "Window9", "9",
+        "Minimized1", "^1",
+        "Minimized2", "^2",
+        "Minimized3", "^3",
+        "Minimized4", "^4",
+        "Minimized5", "^5",
+        "Minimized6", "^6",
+        "Minimized7", "^7",
+        "Minimized8", "^8",
+        "Minimized9", "^9",
+        "Minimized0", "^0"
     ),
     "Visual", Map(
         "Delete", "d",
@@ -221,8 +231,7 @@ global SettingsSchema := Map(
     "Dock", Map(
         "DockIconSize", "int",
         "DockIconSpacing", "int",
-        "DockLeftCount", "int",
-        "DockRightCount", "int",
+        "DockMinimizedPadding", "int",
         "DockMarginX", "int",
         "DockMarginY", "int",
         "DockPosY", "int",
@@ -379,7 +388,7 @@ ParseConfigValue(name, type, value) {
 }
 
 ApplySetting(section, key, value) {
-    global FullWidthRatio, FocusWidthRatio, Gap, BarHeight, EmergencyMargin, EmergencyMinWidth, EmergencyMinHeight, EmergencyMaxWidth, EmergencyMaxHeight, TaskbarMode, TaskbarSize, HUDBackgroundColor, DockBackgroundColor, NormalModeColor, VisualModeColor, InsertModeColor, TargetingModeColor, FlashMsgColor, SuspendedModeColor, ActiveIndicatorColor, DockInactiveNumberColor, FocusBorderEnabled, FocusBorderColor, FocusBorderThickness, FocusBorderUpdateInterval, FontFamily, HUDFontSize, HUDFontWeight, DockNumberFontSize, DockIconSize, DockIconSpacing, DockLeftCount, DockRightCount, DockMarginX, DockMarginY, DockPosY, DockNumberHeight, HUDMarginRight, HUDPosY, HUDWidth, FlashDuration, DblClickTimeout, DebounceDelay, DesktopSwitchDelay, DockUpdateDelay, TooltipDuration, TargetMinCellSize, TargetGridRows, TargetGridCols, TargetGridKeys, ExclusionProcesses, ExclusionClasses
+    global FullWidthRatio, FocusWidthRatio, Gap, BarHeight, EmergencyMargin, EmergencyMinWidth, EmergencyMinHeight, EmergencyMaxWidth, EmergencyMaxHeight, TaskbarMode, TaskbarSize, HUDBackgroundColor, DockBackgroundColor, NormalModeColor, VisualModeColor, InsertModeColor, TargetingModeColor, FlashMsgColor, SuspendedModeColor, ActiveIndicatorColor, DockInactiveNumberColor, FocusBorderEnabled, FocusBorderColor, FocusBorderThickness, FocusBorderUpdateInterval, FontFamily, HUDFontSize, HUDFontWeight, DockNumberFontSize, DockIconSize, DockIconSpacing, DockMinimizedPadding, DockMarginX, DockMarginY, DockPosY, DockNumberHeight, HUDMarginRight, HUDPosY, HUDWidth, FlashDuration, DblClickTimeout, DebounceDelay, DesktopSwitchDelay, DockUpdateDelay, TooltipDuration, TargetMinCellSize, TargetGridRows, TargetGridCols, TargetGridKeys, ExclusionProcesses, ExclusionClasses
     switch (section "." key) {
         case "Layout.FullWidthRatio": FullWidthRatio := value
         case "Layout.FocusWidthRatio": FocusWidthRatio := value
@@ -412,8 +421,7 @@ ApplySetting(section, key, value) {
         case "Fonts.DockNumberFontSize": DockNumberFontSize := value
         case "Dock.DockIconSize": DockIconSize := value
         case "Dock.DockIconSpacing": DockIconSpacing := value
-        case "Dock.DockLeftCount": DockLeftCount := value
-        case "Dock.DockRightCount": DockRightCount := value
+        case "Dock.DockMinimizedPadding": DockMinimizedPadding := value
         case "Dock.DockMarginX": DockMarginX := value
         case "Dock.DockMarginY": DockMarginY := value
         case "Dock.DockPosY": DockPosY := value
