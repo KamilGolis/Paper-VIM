@@ -65,7 +65,9 @@ global ExclusionClasses := []
 ; Action names are stable; sections map to hotkey contexts.
 global DefaultKeymap := Map(
     "Global", Map(
-        "ToggleVim", "CapsLock"
+        "ToggleVim", "CapsLock",
+        "PrevWindow", "#!h",
+        "NextWindow", "#!l"
     ),
     "Suspend", Map(
         "Suspend", "^q"

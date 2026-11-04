@@ -1,6 +1,6 @@
 ; ==============================================================================
 ; Paper-VIM: Vim Keybindings + PaperWM Window Manager
-; Version: 1.13.1
+; Version: 1.13.2
 ; Author: KamilGolis
 ; Description: Combines vim-style navigation with PaperWM tiling window manager
 ; License: MIT
@@ -460,6 +460,7 @@ BuildHelpText(currentMode) {
     rightLines := [
         "WINDOW MANAGEMENT",
         "  n / Tab                 Next / previous open window",
+        "  Win+Alt+H / Win+Alt+L   Previous / next window (any mode)",
         "  1-9                     Jump to open window number",
         "  Ctrl+M                  Minimize focused window",
         "  Ctrl+1-9 / Ctrl+0       Restore minimized window 1-9 / 10",
@@ -2325,8 +2326,8 @@ CenterActiveWindow() {
 ; Cycle through open windows in stack order
 ; @param direction - Direction to cycle (1=next, -1=previous)
 CycleStack(direction) {
-    ; Don't cycle when layout is frozen
-    if (LayoutFrozen())
+    ; Don't cycle when layout is frozen or the help overlay is open.
+    if (LayoutFrozen() || HelpVisible)
         return
 
     ; Remove hidden windows before choosing a target. Otherwise WinActivate can
@@ -2784,6 +2785,10 @@ SetTimer(PruneWindowStack, 500)
 ; Catch minimize/restore changes that do not produce an activation shell event.
 SetTimer(RefreshDockState, 250)
 
+; Quick window scrolling works even when Vim mode is off.
+#!h:: CycleStack(-1)
+#!l:: CycleStack(1)
+
 ; Toggle Vim mode with CapsLock
 CapsLock:: {
     ; F1 and Esc close help; CapsLock must not change the mode while it is open.
@@ -3139,6 +3144,9 @@ RunKeyAction(context, action, *) {
                 UpdateHUD(VimMode == 0 ? 1 : 0)
             }
         }
+
+        case "Global.PrevWindow": CycleStack(-1)
+        case "Global.NextWindow": CycleStack(1)
 
         case "Suspend.Suspend":
             ToggleSuspend()
