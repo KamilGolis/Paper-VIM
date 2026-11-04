@@ -56,6 +56,7 @@ This script was born out of necessity. Unable to use Linux with my preferred set
 ### Window Navigation
 - **n**: Next open window
 - **Tab**: Previous open window
+- **Win+Alt+H / Win+Alt+L**: Previous / next window without entering Normal mode
 - **1-9**: Jump directly to open window at that number
 - **z**: Reflow/refresh window layout
 - **Ctrl+Q**: Suspend/resume script (preserves window state)
@@ -105,6 +106,7 @@ The 25/50/75 presets use niri-style edge scrolling.
 ### Stack Operations
 - **n**: Cycle to the next open window (right)
 - **Tab**: Cycle to the previous open window (left)
+- **Win+Alt+H / Win+Alt+L**: Previous / next window from any Vim mode
 - **1-9**: Jump directly to open window 1-9
 - **Ctrl+M**: Minimize the focused open window
 - **Ctrl+1..9**: Restore minimized window 1-9 to the open dock
@@ -549,6 +551,8 @@ Every user-facing hotkey has an action name. Override the key in the matching
 ```ini
 [Keys.Global]
 ToggleVim=CapsLock
+PrevWindow=#!h
+NextWindow=#!l
 
 [Keys.Normal]
 Target=m
